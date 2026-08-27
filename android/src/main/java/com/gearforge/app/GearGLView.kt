@@ -382,9 +382,15 @@ class GearGLView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 if (event.eventTime - event.downTime < 300 && abs(event.x - lastX) < 10 && abs(event.y - lastY) < 10) {
                     pick(event.x, event.y)
+                    performClick()
                 }
             }
         }
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
         return true
     }
 
