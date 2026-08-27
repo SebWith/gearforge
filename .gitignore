@@ -1,0 +1,22 @@
+# --- Gear Forge Phase 5: signing secrets (NEVER commit) ---
+android/release.keystore
+android/keystore.properties
+
+# --- Gradle build outputs ---
+.gradle/
+build/
+**/build/
+
+# --- Local configuration (machine-specific, contains SDK path) ---
+local.properties
+
+# --- Android Studio / IDE ---
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- Kotlin ---
+.kotlin/

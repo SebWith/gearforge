@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .github/hooks/scripts/auto-linter-guard.ps1",
+        "timeout": 120
+      }
+    ]
+  }
+}

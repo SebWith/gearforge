@@ -1,0 +1,11 @@
+{
+    "java.configuration.runtimes": [
+        {
+            "name": "JavaSE-17",
+            "path": "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.8-hotspot",
+            "default": true
+        }
+    ],
+    "emulator.emulatorPathWindows": "C:\\Users\\sebbe\\android-dev\\android-sdk\\emulator",
+    "java.configuration.updateBuildConfiguration": "automatic"
+}

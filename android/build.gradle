@@ -1,0 +1,128 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
+
+// ---------------------------------------------------------------------------
+// Single source of truth for AdMob IDs (see MONETIZATION_CONFIG.md).
+//
+// Defaults are Google's official TEST values so debug/release builds always
+// compile without hard-coding production IDs. To use real IDs for a release:
+//   gradlew :android:assembleRelease \
+//       -PadmobAppId=ca-app-pub-XXXX~YYYY \
+//       -PadmobRewardedUnitId=ca-app-pub-XXXX/YYYY
+// ---------------------------------------------------------------------------
+def admobAppId = project.findProperty('admobAppId') ?: 'ca-app-pub-3940256099942544~3347511713'
+def admobRewardedUnitId = project.findProperty('admobRewardedUnitId') ?: 'ca-app-pub-3940256099942544/5224354917'
+
+// ---------------------------------------------------------------------------
+// Release signing (Phase 5, ACTION_PLAN point 30).
+//
+// Credentials live in android/keystore.properties (gitignored, never commit).
+// Signing is OPTIONAL: if the file is absent, assembleRelease keeps producing
+// an unsigned APK (android-release-unsigned.apk) so CI/local builds without
+// the keystore still work. With the file present, assembleRelease produces a
+// signed APK (android-release.apk).
+// ---------------------------------------------------------------------------
+def keystorePropertiesFile = file('keystore.properties')
+def keystoreProperties = new Properties()
+def hasReleaseSigning = keystorePropertiesFile.exists()
+if (hasReleaseSigning) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace 'com.gearforge.app'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.gearforge.app"
+        minSdk 24
+        // targetSdk 36 is required for Play submission from Aug 2026.
+        targetSdk 36
+        // Phase 5 (point 30): bumped for the first store-ready release (was 1).
+        versionCode 2
+        versionName "1.0"
+
+        // Injects the AdMob App ID into AndroidManifest.xml meta-data.
+        manifestPlaceholders = [admobAppId: admobAppId]
+
+        // Exposes the IDs to Kotlin (BuildConfig.ADMOB_APP_ID / ADMOB_REWARDED_UNIT_ID).
+        buildConfigField 'String', 'ADMOB_APP_ID', "\"$admobAppId\""
+        buildConfigField 'String', 'ADMOB_REWARDED_UNIT_ID', "\"$admobRewardedUnitId\""
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // Point 19: enable R8 code shrinking + resource shrinking for release.
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            // Point 30: sign the release APK when keystore.properties is present.
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'src/main/AndroidManifest.xml'
+            java.srcDirs = ['src/main/java']
+            res.srcDirs = ['src/main/res']
+            assets.srcDirs = ['src/main/assets']
+        }
+    }
+
+    gradle.taskGraph.whenReady { taskGraph ->
+        def buildingRelease = taskGraph.allTasks.any { it.name == 'assembleRelease' || it.name == 'bundleRelease' }
+        if (buildingRelease) {
+            if (admobAppId.startsWith('ca-app-pub-3940256099942544') ||
+                admobRewardedUnitId.startsWith('ca-app-pub-3940256099942544')) {
+                throw new GradleException("Release build requires real AdMob IDs (-PadmobAppId=... -PadmobRewardedUnitId=...)")
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation project(':core')
+    implementation 'androidx.core:core-ktx:1.15.0'
+    implementation platform('androidx.compose:compose-bom:2024.12.01')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.activity:activity-compose:1.9.3'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.7'
+    implementation 'com.google.android.gms:play-services-ads:23.5.0'
+    implementation 'com.google.android.ump:user-messaging-platform:2.2.0'
+    implementation 'com.android.billingclient:billing:7.1.1'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
+}

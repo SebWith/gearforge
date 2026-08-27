@@ -1,0 +1,28 @@
+apply plugin: 'org.jetbrains.kotlin.jvm'
+apply plugin: 'java-library'
+
+sourceCompatibility = '17'
+targetCompatibility = '17'
+
+compileKotlin {
+    kotlinOptions.jvmTarget = '17'
+}
+compileTestKotlin {
+    kotlinOptions.jvmTarget = '17'
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+    testClassesDirs = files(sourceSets.test.output.classesDirs, "$buildDir/classes/kotlin/test")
+    classpath = sourceSets.test.runtimeClasspath
+    jvmArgs '-Dfile.encoding=UTF-8'
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}
