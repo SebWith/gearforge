@@ -1,6 +1,5 @@
 buildscript {
     ext {
-        gdxVersion = '1.14.2'
         kotlinVersion = '2.0.21'
         agpVersion = '8.7.3'
     }
