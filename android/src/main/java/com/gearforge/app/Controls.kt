@@ -19,6 +19,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -203,6 +204,26 @@ internal fun ChoiceRow(def: ParamDef, selected: String, lang: I18n.Lang, onSelec
                     label = { Text(optionLabel(def, o, lang), style = MaterialTheme.typography.labelSmall) }
                 )
             }
+        }
+        if (showHelp) {
+            HelpText(def, lang)
+        }
+    }
+}
+
+/** Boolean toggle rendered as a Material switch with label and optional help. */
+@Composable
+internal fun ToggleRow(def: ParamDef, value: Boolean, lang: I18n.Lang, onChange: (Boolean) -> Unit) {
+    var showHelp by remember { mutableStateOf(false) }
+    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(fieldLabel(def, lang), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            if (def.help.isNotEmpty()) {
+                IconButton(onClick = { showHelp = !showHelp }, modifier = Modifier.size(44.dp)) {
+                    Icon(Icons.Filled.Info, contentDescription = I18n.t(lang, "help_tooltip"))
+                }
+            }
+            Switch(checked = value, onCheckedChange = onChange)
         }
         if (showHelp) {
             HelpText(def, lang)

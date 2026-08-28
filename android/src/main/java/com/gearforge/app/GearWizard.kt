@@ -366,6 +366,7 @@ private fun CustomParamsPage(
             params = params,
             onNumber = { key, v -> params = GearSpec.setNumber(params, key, v.toDouble()) },
             onChoice = { key, v -> params = GearSpec.setChoice(params, key, v) },
+            onBool = { key, v -> params = GearSpec.setBool(params, key, v) },
             lang = lang,
             modifier = Modifier.weight(1f).fillMaxWidth(),
             onToothOverrides = { ov -> params = params.copy(toothOverrides = ov) }

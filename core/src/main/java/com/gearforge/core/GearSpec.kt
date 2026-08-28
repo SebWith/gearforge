@@ -12,7 +12,7 @@ enum class ParamGroup(val order: Int) {
 }
 
 /** What kind of UI control a parameter maps to. */
-enum class FieldKind { NUMBER, CHOICE, CALCULATED }
+enum class FieldKind { NUMBER, CHOICE, BOOLEAN, CALCULATED }
 
 /** Scope of a parameter: global, per-tooth (pattern) or local (per-tooth exception). */
 enum class ParamScope { GLOBAL, PER_TOOTH, LOCAL }
@@ -110,6 +110,9 @@ object GearSpec {
     private fun choice(key: String, label: String, group: ParamGroup, options: List<String>, editable: Boolean = true, help: String = "") =
         ParamDef(key, label, group, FieldKind.CHOICE, options = options, editable = editable, help = help)
 
+    private fun bool(key: String, label: String, group: ParamGroup, editable: Boolean = true, help: String = "") =
+        ParamDef(key, label, group, FieldKind.BOOLEAN, editable = editable, help = help)
+
     // ---- defaults per type ----------------------------------------------
     fun defaults(type: GearType): GearParams = when (type) {
         GearType.SPUR -> GearParams(gearType = type, module = 1.0, teeth = 20)
@@ -179,6 +182,15 @@ object GearSpec {
             help = "Hub protrusion on the left side of the face."))
         add(number("hub_right_length", "Hub right length", ParamGroup.HUB, 0.0, 50.0, 2, "mm",
             help = "Hub protrusion on the right side of the face."))
+        val nonRoundBore = p.bore.type != BoreType.NONE && p.bore.type != BoreType.ROUND
+        if (nonRoundBore && GearCalculator.effectiveHubLeft(p) > 0.0) {
+            add(bool("hub_left_bore_follows", "Left hub follows shaft bore", ParamGroup.HUB,
+                help = "When on, the left hub's bore uses the same profile (D-cut, keyway or hex) as the gear. When off, the left hub stays a round cylinder."))
+        }
+        if (nonRoundBore && GearCalculator.effectiveHubRight(p) > 0.0) {
+            add(bool("hub_right_bore_follows", "Right hub follows shaft bore", ParamGroup.HUB,
+                help = "When on, the right hub's bore uses the same profile (D-cut, keyway or hex) as the gear. When off, the right hub stays a round cylinder."))
+        }
         add(number("hub_chamfer", "Hub chamfer", ParamGroup.HUB, 0.0, 20.0, 2, "mm",
             help = "45° chamfer of the hub's outer edge."))
         add(number("hub_fillet", "Hub fillet", ParamGroup.HUB, 0.0, 20.0, 2, "mm",
@@ -583,6 +595,18 @@ object GearSpec {
         "belt_profile" -> p.copy(beltProfile = v)
         else -> p
     }).coerced() // audit C3: keep choices in a sanitized state
+
+    fun getBool(p: GearParams, key: String): Boolean = when (key) {
+        "hub_left_bore_follows" -> p.hubLeftBoreFollowsShaft
+        "hub_right_bore_follows" -> p.hubRightBoreFollowsShaft
+        else -> false
+    }
+
+    fun setBool(p: GearParams, key: String, v: Boolean): GearParams = when (key) {
+        "hub_left_bore_follows" -> p.copy(hubLeftBoreFollowsShaft = v)
+        "hub_right_bore_follows" -> p.copy(hubRightBoreFollowsShaft = v)
+        else -> p
+    }
 
     // ---- computed results ------------------------------------------------
     /**

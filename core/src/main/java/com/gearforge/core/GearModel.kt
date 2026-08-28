@@ -109,6 +109,8 @@ data class GearParams(
     // ---- asymmetric hub / boss / collar (hubLength kept as backward-compatible fallback) ----
     val hubLeftLength: Double = 0.0,      // axial protrusion left of the face (mm); 0 → fall back to hubLength/2
     val hubRightLength: Double = 0.0,     // axial protrusion right of the face (mm); 0 → fall back to hubLength/2
+    val hubLeftBoreFollowsShaft: Boolean = true,  // left hub bore uses the gear's bore profile (D-cut/keyway/hex) instead of round
+    val hubRightBoreFollowsShaft: Boolean = true, // right hub bore uses the gear's bore profile instead of round
     val hubChamfer: Double = 0.0,         // 45° outer-edge chamfer (mm)
     val hubFillet: Double = 0.0,          // hub↔body transition radius (mm)
     val hubDraftAngleDeg: Double = 0.0,   // casting draft angle (deg)

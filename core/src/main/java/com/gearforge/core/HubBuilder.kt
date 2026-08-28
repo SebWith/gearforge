@@ -37,10 +37,16 @@ object HubBuilder {
             Vec2(rMid * cos(angle), rMid * sin(angle))
         }
 
-        fun protrusion(height: Double, zBase: Double): Mesh {
+        fun protrusion(height: Double, zBase: Double, follows: Boolean): Mesh {
             if (height <= 0.0) return Mesh(emptyList(), emptyList())
             val holes = ArrayList<List<Vec2>>()
-            if (p.bore.type != BoreType.NONE) holes.add(Bore.round(boreR))
+            if (p.bore.type != BoreType.NONE) {
+                // When the hub follows the shaft bore, reuse the gear's bore profile (D-cut,
+                // keyway or hex) so the flat/slot extends through the full hub length. Otherwise
+                // the hub stays a plain round cylinder while only the gear body carries the profile.
+                val hubHole = if (follows) (Bore.holes(p).firstOrNull() ?: Bore.round(boreR)) else Bore.round(boreR)
+                holes.add(hubHole)
+            }
             for (s in screwPositions) {
                 if (screwR > 0.0) holes.add(Bore.round(screwR).map { Vec2(it.x + s.x, it.y + s.y) })
             }
@@ -48,6 +54,9 @@ object HubBuilder {
             return Mesh(mesh.vertices.map { Vec3(it.x, it.y, it.z + zBase) }, mesh.triangles)
         }
 
-        return MeshOps.merge(listOf(protrusion(hubL, -hubL), protrusion(hubR, p.thickness)))
+        return MeshOps.merge(listOf(
+            protrusion(hubL, -hubL, p.hubLeftBoreFollowsShaft),
+            protrusion(hubR, p.thickness, p.hubRightBoreFollowsShaft)
+        ))
     }
 }

@@ -5,13 +5,14 @@ Single source of truth for the monetization integration implemented in Phase 1
 
 ## 1. AdMob IDs — test values and where they live
 
-The project currently ships **Google's official TEST IDs only**. No production IDs
-exist yet, and none have been invented.
+The project keeps **Google's official TEST IDs as dev/CI fallbacks**, with the
+**real production IDs supplied at release time** via Gradle properties (enforced
+by the release guard in `android/build.gradle`).
 
-| ID | Test value | Purpose |
+| ID | Production value | Purpose |
 |---|---|---|
-| App ID | `ca-app-pub-3940256099942544~3347511713` | Mobile Ads SDK initialization |
-| Rewarded unit | `ca-app-pub-3940256099942544/5224354917` | Rewarded video shown for the export gate |
+| App ID | `ca-app-pub-6154121627229543~9677913532` | Mobile Ads SDK initialization |
+| Rewarded unit | `ca-app-pub-6154121627229543/4517387519` | Rewarded video shown for the export gate |
 
 ### Where each ID lives
 
@@ -35,9 +36,9 @@ the top of [`android/build.gradle`](android/build.gradle):
 To build a release with real IDs:
 
 ```bash
-.\gradlew.bat :android:assembleRelease \
-    -PadmobAppId=ca-app-pub-XXXXXXXX~YYYYYYYY \
-    -PadmobRewardedUnitId=ca-app-pub-XXXXXXXX/YYYYYYYY
+.\gradlew.bat :android:assembleRelease ^
+    -PadmobAppId=ca-app-pub-6154121627229543~9677913532 ^
+    -PadmobRewardedUnitId=ca-app-pub-6154121627229543/4517387519
 ```
 
 Alternatively, replace the two `?:` fallbacks at the top of

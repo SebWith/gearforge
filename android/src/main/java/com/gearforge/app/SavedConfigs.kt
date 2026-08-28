@@ -61,6 +61,8 @@ object SavedConfigs {
         // ---- asymmetric hub / grub screw / structure / markers / tolerances ----
         put("hubLeftLength", p.hubLeftLength)
         put("hubRightLength", p.hubRightLength)
+        put("hubLeftBoreFollows", p.hubLeftBoreFollowsShaft)
+        put("hubRightBoreFollows", p.hubRightBoreFollowsShaft)
         put("hubChamfer", p.hubChamfer)
         put("hubFillet", p.hubFillet)
         put("hubDraftAngle", p.hubDraftAngleDeg)
@@ -157,6 +159,8 @@ object SavedConfigs {
             safetyFactor = o.optDouble("safetyFactor", 1.5),
             hubLeftLength = o.optDouble("hubLeftLength", 0.0),
             hubRightLength = o.optDouble("hubRightLength", 0.0),
+            hubLeftBoreFollowsShaft = o.optBoolean("hubLeftBoreFollows", true),
+            hubRightBoreFollowsShaft = o.optBoolean("hubRightBoreFollows", true),
             hubChamfer = o.optDouble("hubChamfer", 0.0),
             hubFillet = o.optDouble("hubFillet", 0.0),
             hubDraftAngleDeg = o.optDouble("hubDraftAngle", 0.0),

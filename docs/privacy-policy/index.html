@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Privacy policy for the Gear Forge Android app (com.gearforge.app). Covers advertising (Google AdMob), in-app purchases (Google Play Billing) and on-device data." />
+  <title>Privacy Policy — Gear Forge</title>
+  <style>
+    :root {
+      --bg: #f5f8fb;
+      --surface: #ffffff;
+      --ink: #1a2b36;
+      --muted: #52616d;
+      --accent: #00658c;
+      --accent-soft: #c2e8ff;
+      --border: #e2eaf1;
+      --radius: 14px;
+      --shadow: 0 2px 10px rgba(0, 45, 72, 0.07);
+      --maxw: 780px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    a { color: var(--accent); }
+
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 20px; }
+
+    header.hero {
+      background: linear-gradient(135deg, #003a53 0%, #00658c 60%, #0087b8 100%);
+      color: #eaf6ff;
+      padding: 44px 0 38px;
+    }
+
+    header.hero .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    header.hero .logo {
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      display: grid;
+      place-items: center;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+
+    header.hero h1 {
+      margin: 0;
+      font-size: clamp(26px, 5vw, 34px);
+      line-height: 1.2;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+    }
+
+    header.hero .sub {
+      margin: 6px 0 0;
+      color: rgba(234, 246, 255, 0.82);
+      font-size: 15px;
+    }
+
+    header.hero .meta {
+      margin-top: 18px;
+      font-size: 13.5px;
+      color: rgba(234, 246, 255, 0.85);
+    }
+
+    main { padding: 28px 0 48px; }
+
+    .toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 20px 22px;
+      margin-bottom: 24px;
+    }
+
+    .toc h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+    }
+
+    .toc ol { margin: 0; padding-left: 20px; }
+    .toc li { margin: 5px 0; }
+    .toc a { text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+
+    section.card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 24px 26px;
+      margin-bottom: 22px;
+    }
+
+    section.card h2 {
+      margin: 0 0 12px;
+      font-size: 21px;
+      line-height: 1.35;
+    }
+
+    section.card p { margin: 0 0 12px; }
+    section.card ul { margin: 0 0 12px; padding-left: 22px; }
+    section.card li { margin: 5px 0; }
+    section.card p:last-child, section.card ul:last-child { margin-bottom: 0; }
+
+    .lang-sw {
+      border-left-color: #3f51b5;
+    }
+
+    .lang-sw h2::after {
+      content: " · Svenska";
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.8em;
+    }
+
+    .badge {
+      display: inline-block;
+      background: var(--accent-soft);
+      color: #00344c;
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 12.5px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    footer {
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13.5px;
+      padding: 26px 0 40px;
+      text-align: center;
+    }
+
+    footer a { color: var(--muted); }
+
+    @media (max-width: 560px) {
+      body { font-size: 15px; }
+      header.hero { padding: 32px 0 28px; }
+      section.card { padding: 20px 18px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="brand">
+        <div class="logo">G</div>
+        <div>
+          <h1>Gear Forge — Privacy Policy</h1>
+          <p class="sub">3D Gear Generator · package com.gearforge.app</p>
+        </div>
+      </div>
+      <p class="meta">Last updated: 28 August 2026</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <nav class="toc" aria-label="Table of contents">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#no-collection">What we do NOT collect</a></li>
+        <li><a href="#advertising">Advertising (Google AdMob)</a></li>
+        <li><a href="#purchases">Purchases (Google Play Billing)</a></li>
+        <li><a href="#on-device">Data stored on device</a></li>
+        <li><a href="#children">Children</a></li>
+        <li><a href="#changes">Changes &amp; contact</a></li>
+        <li><a href="#sv">Svensk sammanfattning (Swedish summary)</a></li>
+      </ol>
+    </nav>
+
+    <section class="card" id="no-collection">
+      <span class="badge">No account · No uploads</span>
+      <h2>1. What we do NOT collect</h2>
+      <p>Gear Forge does <strong>not</strong> require an account and does <strong>not</strong> collect, store or transmit any of the following:</p>
+      <ul>
+        <li>Names, email addresses, phone numbers or other contact details.</li>
+        <li>Location data.</li>
+        <li>Photos, contacts or files from your device. Exported gear files are written to your own Downloads folder and are never uploaded.</li>
+        <li>Health, financial or other sensitive personal data.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="advertising">
+      <span class="badge">Rewarded video ads</span>
+      <h2>2. Advertising (Google AdMob)</h2>
+      <p>The app displays Google AdMob <strong>rewarded video ads</strong> at the export gate. AdMob and its partners may use the device&rsquo;s <strong>advertising identifier (Ad ID)</strong> and other device information to serve and measure ads, including <strong>personalized ads</strong>.</p>
+      <ul>
+        <li>For users in the EEA/UK and other applicable regions, we show Google&rsquo;s UMP (User Messaging Platform) consent form before any ads are loaded, and the app respects your consent choice.</li>
+        <li>You can reset or opt out of personalized ads in your device settings (Settings → Google → Ads), or via Google&rsquo;s Ads Settings.</li>
+      </ul>
+      <p>Google&rsquo;s use of data is governed by Google&rsquo;s Privacy Policy: <a href="https://policies.google.com/privacy" rel="noopener" target="_blank">https://policies.google.com/privacy</a>.</p>
+    </section>
+
+    <section class="card" id="purchases">
+      <span class="badge">Google Play Billing</span>
+      <h2>3. Purchases (Google Play Billing)</h2>
+      <p>The app offers a one-time &ldquo;Pro&rdquo; in-app purchase via <strong>Google Play Billing</strong>. Payment processing is handled entirely by Google Play; the app never sees or stores your payment card details. Your purchase is tied to your Google Account and can be restored on other devices signed in to the same account.</p>
+    </section>
+
+    <section class="card" id="on-device">
+      <span class="badge">Local only</span>
+      <h2>4. Data stored on device</h2>
+      <p>The app stores only lightweight local preferences on your device (theme, language, units, Pro status, remaining free-export count) using Android SharedPreferences. This data never leaves your device.</p>
+    </section>
+
+    <section class="card" id="children">
+      <span class="badge">Not for children</span>
+      <h2>5. Children</h2>
+      <p>The app is not directed at children. We do not knowingly collect personal data from children.</p>
+    </section>
+
+    <section class="card" id="changes">
+      <span class="badge">Updates</span>
+      <h2>6. Changes &amp; contact</h2>
+      <p>We may update this policy from time to time. Significant changes will be reflected in-app.</p>
+      <p>For privacy-related questions, contact us at: <a href="mailto:sebcarlfilipwith@gmail.com">sebcarlfilipwith@gmail.com</a>.</p>
+    </section>
+
+    <section class="card lang-sw" id="sv">
+      <span class="badge">På svenska</span>
+      <h2>Svensk sammanfattning</h2>
+      <p>Gear Forge samlar <strong>inte in</strong> personuppgifter, kräver inget konto och laddar inte upp dina filer. Appen visar <strong>belöningsannonser via Google AdMob</strong> vid export, vilket kan använda enhetens <strong>reklam-ID</strong> för att visa och mäta annonser (inklusive personanpassade annonser). Inom EES/EU visas Googles samtyckesformulär (UMP) innan annonser laddas. Pro-köpet hanteras helt av <strong>Google Play Billing</strong> — appen ser aldrig dina kortuppgifter. Endast lokala inställningar (tema, språk, enheter, Pro-status och antal kvarvarande gratisexporter) sparas på din enhet.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>© 2026 Gear Forge · Gear Forge — 3D Gear Generator · com.gearforge.app</p>
+      <p><a href="#top" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">Back to top</a></p>
+    </div>
+  </footer>
+</body>
+</html>

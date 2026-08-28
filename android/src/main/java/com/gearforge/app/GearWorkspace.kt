@@ -350,6 +350,7 @@ fun GearWorkspaceScreen(
                 params = params,
                 onNumber = { key, v -> viewModel.mutate(GearSpec.setNumber(params, key, v.toDouble())) },
                 onChoice = { key, v -> viewModel.mutate(GearSpec.setChoice(params, key, v)) },
+                onBool = { key, v -> viewModel.mutate(GearSpec.setBool(params, key, v)) },
                 lang = lang,
                 sectionExpansion = sectionExpansion,
                 modifier = Modifier.fillMaxWidth(),
@@ -731,6 +732,7 @@ internal fun SettingsPanel(
     params: GearParams,
     onNumber: (String, Float) -> Unit,
     onChoice: (String, String) -> Unit,
+    onBool: (String, Boolean) -> Unit,
     lang: I18n.Lang,
     modifier: Modifier = Modifier,
     sectionExpansion: SectionExpansion? = null,
@@ -821,6 +823,7 @@ internal fun SettingsPanel(
                                     when (def.kind) {
                                         FieldKind.NUMBER -> NumberRow(def, GearSpec.getNumber(params, def.key).toFloat(), params, lang) { onNumber(def.key, it) }
                                         FieldKind.CHOICE -> ChoiceRow(def, GearSpec.getChoice(params, def.key), lang) { onChoice(def.key, it) }
+                                        FieldKind.BOOLEAN -> ToggleRow(def, GearSpec.getBool(params, def.key), lang) { onBool(def.key, it) }
                                         else -> {}
                                     }
                                 }
@@ -841,27 +844,29 @@ internal fun SettingsPanel(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
-                Column(Modifier.padding(bottom = 8.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
-                        Box(
-                            Modifier
-                                .width(4.dp)
-                                .height(22.dp)
-                                .background(groupAccent(ParamGroup.RESULTS), RoundedCornerShape(2.dp))
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(groupLabel(ParamGroup.RESULTS, lang), style = MaterialTheme.typography.titleMedium)
-                    }
-                    Text(
-                        I18n.t(lang, "results_hint"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp)
+                Column {
+                    GroupHeader(
+                        group = ParamGroup.RESULTS,
+                        lang = lang,
+                        expanded = expansion.isExpanded(ParamGroup.RESULTS),
+                        onToggle = { expansion.toggle(ParamGroup.RESULTS) },
+                        accent = groupAccent(ParamGroup.RESULTS)
                     )
-                    results.forEach { (key, value) -> CalculatedRow(I18n.t(lang, key), value) }
+                    AnimatedVisibility(
+                        visible = expansion.isExpanded(ParamGroup.RESULTS),
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        Column(Modifier.padding(bottom = 8.dp)) {
+                            Text(
+                                I18n.t(lang, "results_hint"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                            results.forEach { (key, value) -> CalculatedRow(I18n.t(lang, key), value) }
+                        }
+                    }
                 }
             }
         }
