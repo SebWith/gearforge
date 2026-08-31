@@ -18,9 +18,15 @@ dependencies {
 
 test {
     useJUnit()
+    // The large-mesh stress test (>1M triangles) validates + serializes a mesh whose
+    // intermediate HashSets and STL byte buffer exceed the default worker heap.
+    maxHeapSize = "2g"
     // NOTE: do NOT override testClassesDirs/classpath here — Gradle's defaults already
     // resolve the Kotlin test output; overriding them dropped the compiled test classes
     // from the forked worker's classpath (ClassNotFoundException on every test).
+    // Keep the test worker's own file.encoding as UTF-8 for correct log/report output.
+    // The worker classpath itself is resolved correctly because the daemon now writes the
+    // Java @argfile in the platform encoding (see gradle.properties).
     jvmArgs '-Dfile.encoding=UTF-8'
     testLogging {
         events 'passed', 'skipped', 'failed'
