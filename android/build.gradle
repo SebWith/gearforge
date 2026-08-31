@@ -42,10 +42,10 @@ android {
         minSdk 24
         // targetSdk 36 is required for Play submission from Aug 2026.
         targetSdk 36
-        // versionCode bumped to 3 so this upload is strictly higher than the
-        // earlier dev/store-ready builds (1 and 2). versionName stays "1.0" as
-        // this is the first public production release.
-        versionCode 3
+        // versionCode bumped to 4: Play Console rejected 3 as "already used"
+        // (an earlier upload consumed it). versionName stays "1.0" as this is
+        // the first public production release.
+        versionCode 4
         versionName "1.0"
 
         // Injects the AdMob App ID into AndroidManifest.xml meta-data.
