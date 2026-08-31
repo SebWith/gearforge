@@ -34,10 +34,14 @@ class RingGeometryValidationTest {
     }
 
     @Test
-    fun ringMeshRejectsInvertedRadii() {
-        assertThrows(IllegalArgumentException::class.java) {
-            GearBuilder.ringMesh(corruptedRing())
-        }
+    fun ringMeshCoercesInvertedRadiiToValidMesh() {
+        // ringMesh() coerces the parameters at the entry point (audit H1), so a
+        // corrupted/inverted ring (module tampered to a negative value) is clamped to
+        // a valid module instead of crashing or emitting a degenerate mesh.
+        val mesh = GearBuilder.ringMesh(corruptedRing())
+        assertTrue("ring mesh must be non-empty after coercion", mesh.triangles.isNotEmpty())
+        assertTrue("ring mesh must be watertight after coercion",
+            MeshOps.validate(mesh).issues.filterNot { it.contains("duplicate vertices") }.isEmpty())
     }
 
     @Test

@@ -40,7 +40,8 @@ data class BeltTransmission(
     val flangeDiameterMm: Double = 0.0,  // 0 = auto
     val tensionN: Double = 50.0,
     val backlashMm: Double = 0.0,
-    val toleranceClass: String = "ISO 7"
+    val toleranceClass: String = "ISO 7",
+    val bore: BoreSpec = BoreSpec(type = BoreType.ROUND, diameter = 5.0)
 )
 
 /** Maps a [GearParams] of type BELT onto a [BeltTransmission] for geometry generation. */
@@ -54,7 +55,8 @@ fun GearParams.toBeltTransmission(): BeltTransmission = BeltTransmission(
     flangeCount = beltFlangeCount,
     tensionN = beltTensionN,
     backlashMm = beltBacklashMm,
-    toleranceClass = toleranceClass
+    toleranceClass = toleranceClass,
+    bore = bore
 )
 
 /** A resolved transmission with concrete centre distance, belt length and ratio. */
@@ -149,7 +151,9 @@ object BeltCalculator {
 /** Builds pulley meshes and the 2D belt path for a transmission. */
 object BeltBuilder {
 
-    /** A pulley as a trapezoid-toothed (straight) gear with module = pitch/π. */
+    /** A pulley as a straight-tooth (grooved) cylinder whose tooth tops sit on the
+     *  pitch circle, so the belt band can wrap the pitch line without penetration
+     *  (audit H1). The grooves below the pitch line receive the belt teeth. */
     fun pulleyMesh(t: BeltTransmission, teeth: Int): Mesh {
         val module = t.profile.pitchMm / PI
         val params = GearParams(
@@ -158,9 +162,41 @@ object BeltBuilder {
             module = module,
             teeth = teeth,
             thickness = t.beltWidthMm,
-            backlash = t.backlashMm
-        )
-        return GearBuilder.mesh(params)
+            backlash = t.backlashMm,
+            addendumCoef = 0.0,     // tooth top flush with the pitch circle
+            dedendumCoef = 0.7,     // groove depth for the belt teeth
+            bore = t.bore           // shaft bore (round, D-cut, keyway, hex or square)
+        ).coerced()
+        val body = GearBuilder.mesh(params)
+        val flanges = flangeMeshes(t, params)
+        return if (flanges.isEmpty()) body else MeshOps.merge(listOf(body) + flanges)
+    }
+
+    /**
+     * Retaining flanges: thin annular discs at one or both pulley faces whose outer
+     * radius exceeds the pulley's pitch radius so the belt is guided laterally. Each
+     * disc carries the same shaft bore as the pulley body, so the bore profile runs
+     * continuously through the flanges. The disc face coincides with the pulley end
+     * face over the solid annulus (a touching union, like the hub boss), keeping the
+     * merged pulley a closed 2-manifold.
+     */
+    private fun flangeMeshes(t: BeltTransmission, params: GearParams): List<Mesh> {
+        val count = t.flangeCount.coerceIn(0, 2)
+        if (count <= 0) return emptyList()
+        val pitchR = GearCalculator.pitchRadius(params.module, params.teeth)
+        val autoR = pitchR + max(2.0, t.profile.pitchMm)
+        val flangeR = if (t.flangeDiameterMm > 0.0) max(pitchR + 1.0, t.flangeDiameterMm / 2.0) else autoR
+        val thickness = max(0.8, t.profile.pitchMm * 0.4)
+        val boreHole = Bore.holes(params).firstOrNull()
+        val holes = if (boreHole != null) listOf(boreHole) else emptyList()
+        fun disc(zBase: Double): Mesh {
+            val m = MeshBuilder.extrude(PlanarShape(Bore.round(flangeR), holes), thickness)
+            return Mesh(m.vertices.map { Vec3(it.x, it.y, it.z + zBase) }, m.triangles)
+        }
+        val result = ArrayList<Mesh>(2)
+        if (count >= 1) result.add(disc(-thickness))
+        if (count >= 2) result.add(disc(params.thickness))
+        return result
     }
 
     data class BeltAssembly(
@@ -190,26 +226,128 @@ object BeltBuilder {
     /** 2D belt path (outer band) for SVG/DXF visualisation. */
     fun beltPath2D(t: BeltTransmission): PlanarShape {
         val r = BeltCalculator.resolve(t)
-        val halfT = max(0.6, t.profile.pitchMm / 2.0)
+        val backing = max(1.0, t.profile.pitchMm)
         val outer = beltLoop(
-            Vec2(0.0, 0.0), r.driverPitchDia / 2.0 + halfT,
-            Vec2(r.centerDistanceMm, 0.0), r.drivenPitchDia / 2.0 + halfT
+            Vec2(0.0, 0.0), r.driverPitchDia / 2.0 + backing,
+            Vec2(r.centerDistanceMm, 0.0), r.drivenPitchDia / 2.0 + backing
         )
         return PlanarShape(outer, emptyList())
     }
 
-    /** 3D belt band: the annular belt cross-section extruded by the belt width. */
+    /** 3D belt band: the smooth back sits at pitch radius + backing, and the inner
+     *  face carries trapezoidal teeth that project INWARD (toward the pulley centres)
+     *  so they seat cleanly in the pulley grooves. The tooth tips stay above the
+     *  groove bottom, so the band never penetrates the pulley bodies (audit H1/T6). */
     fun beltBandMesh(t: BeltTransmission): Mesh {
         val r = BeltCalculator.resolve(t)
-        val halfT = max(0.6, t.profile.pitchMm / 2.0)
+        val backing = max(1.0, t.profile.pitchMm)
         val c1 = Vec2(0.0, 0.0)
         val c2 = Vec2(r.centerDistanceMm, 0.0)
         val r1 = r.driverPitchDia / 2.0
         val r2 = r.drivenPitchDia / 2.0
-        val outer = beltLoop(c1, r1 + halfT, c2, r2 + halfT)
-        val inner = beltLoop(c1, r1 - halfT, c2, r2 - halfT)
+        val outer = beltLoop(c1, r1 + backing, c2, r2 + backing)
+        // Belt tooth height matches the pulley groove depth (dedendum 0.7·m) minus a
+        // small clearance, so the teeth seat in the grooves without bottoming out.
+        val toothHeight = 0.6 * t.profile.pitchMm / PI
+        val inner = toothedBeltInner(c1, r1, c2, r2, t.profile.pitchMm, toothHeight)
         if (outer.size < 3 || inner.size < 3) return Mesh(emptyList(), emptyList())
         return MeshBuilder.extrude(PlanarShape(outer, listOf(inner)), t.beltWidthMm)
+    }
+
+    /**
+     * The belt's toothed inner boundary: the pitch-line loop around the two pulleys
+     * with inward trapezoidal teeth at uniform pitch intervals. Teeth wrap the pulley
+     * arcs and run along the straight spans, projecting toward the pulley centres.
+     */
+    fun toothedBeltInner(
+        c1: Vec2, r1: Double, c2: Vec2, r2: Double,
+        pitch: Double, toothHeight: Double
+    ): List<Vec2> {
+        val C = c1.dist(c2)
+        if (C <= abs(r1 - r2) + 1e-9) {
+            val center = if (r1 >= r2) c1 else c2
+            return toothedCircle(center, max(r1, r2), pitch, toothHeight)
+        }
+        val theta = atan2(c2.y - c1.y, c2.x - c1.x)
+        val beta = asin(((r2 - r1) / C).coerceIn(-1.0, 1.0))
+        val aUp = theta + PI / 2.0 + beta
+        val aLo = theta - PI / 2.0 - beta
+
+        // Tangent points on the pitch line.
+        fun arc(c: Vec2, r: Double, a: Double) = Vec2(c.x + r * cos(a), c.y + r * sin(a))
+        val t2Up = arc(c2, r2, aUp)
+        val t2Lo = arc(c2, r2, aLo)
+        val t1Up = arc(c1, r1, aUp)
+        val t1Lo = arc(c1, r1, aLo)
+
+        // Loop traversal: driven arc (t2Up→t2Lo) → lower span (t2Lo→t1Lo) →
+        // driver arc (t1Lo→t1Up) → upper span (t1Up→t2Up), then closes.
+        val sweep2 = aLo - aUp                 // clockwise (negative)
+        val arc2Len = abs(sweep2) * r2
+        val sweep1 = (aUp - aLo) - 2.0 * PI    // the far/long way around c1 (negative)
+        val arc1Len = abs(sweep1) * r1
+        val spanLoLen = t1Lo.dist(t2Lo)
+        val spanUpLen = t2Up.dist(t1Up)
+        val total = arc2Len + spanLoLen + arc1Len + spanUpLen
+
+        // Point + inward normal at arc-length s along the loop (starting at t2Up).
+        fun pointAt(s: Double): Pair<Vec2, Vec2> {
+            var rem = s
+            if (rem < arc2Len) {
+                val a = aUp + sweep2 * (rem / arc2Len)
+                val p = arc(c2, r2, a)
+                return p to Vec2(-cos(a), -sin(a))
+            }
+            rem -= arc2Len
+            if (rem < spanLoLen) {
+                val d = (t1Lo - t2Lo) / spanLoLen
+                return (t2Lo + d * rem) to Vec2(d.y, -d.x)
+            }
+            rem -= spanLoLen
+            if (rem < arc1Len) {
+                val a = aLo + sweep1 * (rem / arc1Len)
+                val p = arc(c1, r1, a)
+                return p to Vec2(-cos(a), -sin(a))
+            }
+            rem -= arc1Len
+            val d = (t2Up - t1Up) / spanUpLen
+            return (t1Up + d * rem) to Vec2(d.y, -d.x)
+        }
+
+        val wTip = pitch * 0.45
+        val wBase = pitch * 0.70
+        val n = max(1, (total / pitch).roundToInt())
+        val step = total / n
+        val pts = ArrayList<Vec2>(n * 4)
+        for (i in 0 until n) {
+            val (p, inward) = pointAt((i + 0.5) * step)
+            val t = Vec2(-inward.y, inward.x)          // tangent perpendicular to inward
+            val bl = p - t * (wBase / 2.0)
+            val br = p + t * (wBase / 2.0)
+            val tl = p + inward * toothHeight - t * (wTip / 2.0)
+            val tr = p + inward * toothHeight + t * (wTip / 2.0)
+            pts.add(bl); pts.add(tl); pts.add(tr); pts.add(br)
+        }
+        return pts
+    }
+
+    /** Single toothed circle (degenerate belt loop where one pulley nests the other). */
+    private fun toothedCircle(c: Vec2, r: Double, pitch: Double, toothHeight: Double): List<Vec2> {
+        val n = max(1, (2.0 * PI * r / pitch).roundToInt())
+        val wTip = pitch * 0.45
+        val wBase = pitch * 0.70
+        val pts = ArrayList<Vec2>(n * 4)
+        for (i in 0 until n) {
+            val a = 2.0 * PI * (i + 0.5) / n
+            val p = Vec2(c.x + r * cos(a), c.y + r * sin(a))
+            val inward = Vec2(-cos(a), -sin(a))
+            val t = Vec2(-inward.y, inward.x)
+            pts.add(p - t * (wBase / 2.0))
+            pts.add(p + inward * toothHeight - t * (wTip / 2.0))
+            pts.add(p + inward * toothHeight + t * (wTip / 2.0))
+            pts.add(p + t * (wBase / 2.0))
+        }
+        return pts
     }
 
     /**
@@ -227,7 +365,7 @@ object BeltBuilder {
             }
         }
         val theta = atan2(c2.y - c1.y, c2.x - c1.x)
-        val beta = asin(((r1 - r2) / C).coerceIn(-1.0, 1.0))
+        val beta = asin(((r2 - r1) / C).coerceIn(-1.0, 1.0))
         val aUp = theta + PI / 2.0 + beta
         val aLo = theta - PI / 2.0 - beta
 

@@ -66,6 +66,7 @@ object GearSpec {
     const val WARN_MODULE = "module"
     const val WARN_RING_TEETH = "ring_teeth"
     const val WARN_PLANET_OVERLAP = "planet_overlap"
+    const val WARN_PLANET_PHASE = "planet_phase"
     const val WARN_HELIX_ANGLE = "helix_angle"
     const val WARN_BORE = "bore"
     const val WARN_HUB_WALL = "hub_wall"
@@ -79,6 +80,13 @@ object GearSpec {
     const val WARN_BELT_MESH_TEETH = "belt_mesh_teeth"
     const val WARN_LIGHTENING_HOLE = "lightening_hole"
     const val WARN_BACKLASH = "backlash"
+    const val WARN_UNDERCUT = "undercut"
+    const val WARN_TOPLAND = "topland"
+    const val WARN_TOOTH_OVERLAP = "tooth_overlap"
+    const val WARN_SETSCREW = "setscrew"
+    const val WARN_PROFILE_SHIFT = "profile_shift"
+    const val WARN_TEETH = "teeth"
+    const val WARN_SPACER = "spacer"
 
     /** Minimum hub wall thickness (mm) between the bore and the hub outer diameter. */
     const val MIN_HUB_WALL = 2.0
@@ -88,7 +96,7 @@ object GearSpec {
     val LUBRICATION = listOf("None", "Grease", "Oil", "Dry film")
     val UNITS = listOf("mm (module)", "inch (diametral pitch)")
     val TOOTH_PROFILES = listOf("Involute", "Cycloid", "Straight")
-    val BORE_OPTIONS = listOf("None", "Round", "D-cut", "Keyway", "Hex")
+    val BORE_OPTIONS = listOf("None", "Round", "D-cut", "Keyway", "Hex", "Square")
     val SCREW_THREADS = listOf("M2.5", "M3", "M4", "M5", "M6")
     val BORE_TOLERANCES = listOf("H7", "H8", "F8", "G7")
     val KEYWAY_TOLERANCES = listOf("JS9", "N9", "P9")
@@ -119,7 +127,7 @@ object GearSpec {
         GearType.HELICAL -> GearParams(gearType = type, module = 1.0, teeth = 16, helixAngleDeg = 15.0)
         GearType.BEVEL -> GearParams(gearType = type, module = 1.0, teeth = 20, coneAngleDeg = 45.0, pitchConeDeg = 45.0)
         GearType.RACK -> GearParams(gearType = type, module = 1.0, teeth = 10, pinionTeeth = 20, rackLength = 60.0)
-        GearType.PLANETARY -> GearParams(gearType = type, module = 1.0, teeth = 12, planetTeeth = 12, ringTeeth = 44, planetCount = 3)
+        GearType.PLANETARY -> GearParams(gearType = type, module = 1.0, teeth = 12, planetTeeth = 12, ringTeeth = 36, planetCount = 3)
         GearType.WORM_PAIR -> GearParams(gearType = type, module = 1.0, wormStarts = 1, wheelTeeth = 30, helixAngleDeg = 75.0)
         GearType.INTERNAL_RING -> GearParams(gearType = type, module = 1.0, teeth = 44)
         GearType.HYPOID -> GearParams(gearType = type, module = 1.0, teeth = 20, coneAngleDeg = 35.0, pitchConeDeg = 35.0)
@@ -127,6 +135,7 @@ object GearSpec {
         GearType.HARMONIC_DRIVE -> GearParams(gearType = type, module = 1.0, teeth = 160, toothProfile = ToothProfile.CYCLOID)
         GearType.FACE_GEAR -> GearParams(gearType = type, module = 1.0, teeth = 40)
         GearType.SCREW_GEAR -> GearParams(gearType = type, module = 1.0, teeth = 20, helixAngleDeg = 45.0)
+        GearType.COMPOUND -> GearParams(gearType = type, module = 1.0, teeth = 20, stage2Module = 0.8, stage2Teeth = 16, stage2FaceWidth = 4.0)
         GearType.BELT -> GearParams(gearType = type, beltDriverTeeth = 20, beltDrivenTeeth = 40)
     }
 
@@ -150,7 +159,7 @@ object GearSpec {
                 "Diametral pitch = teeth per inch of pitch diameter."
             else "Module = pitch diameter ÷ teeth; a larger module means bigger teeth."))
         if (includeTeeth) {
-            add(number("teeth", "Teeth", ParamGroup.GEOMETRY, 3.0, 200.0, 0,
+            add(number("teeth", "Teeth", ParamGroup.GEOMETRY, 5.0, 200.0, 0,
                 help = "Number of teeth; sets the pitch diameter together with the module."))
         }
         add(number("pressure_angle", "Pressure angle", ParamGroup.GEOMETRY, 14.0, 30.0, 2, "\u00b0",
@@ -218,14 +227,8 @@ object GearSpec {
     private fun teethFields(): List<ParamDef> = listOf(
         number("root_fillet_coef", "Root fillet (×m)", ParamGroup.TEETH, 0.0, 0.6, 3,
             help = "Root fillet radius as a multiple of the module."),
-        number("transition_coef", "Transition radius (×m)", ParamGroup.TEETH, 0.0, 0.5, 3,
-            help = "Flank-to-root transition radius as a multiple of the module."),
         number("tip_chamfer", "Tip chamfer", ParamGroup.TEETH, 0.0, 2.0, 2, "mm",
-            help = "45° chamfer at the tooth tip."),
-        number("tip_relief", "Tip relief", ParamGroup.TEETH, 0.0, 1.0, 3, "mm",
-            help = "Material relieved from the tooth tip along the flank."),
-        number("root_relief", "Root relief", ParamGroup.TEETH, 0.0, 1.0, 3, "mm",
-            help = "Material relieved from the tooth root along the flank.")
+            help = "45° chamfer at the tooth tip.")
     )
 
     private fun lighteningFields(p: GearParams): List<ParamDef> = buildList {
@@ -269,6 +272,8 @@ object GearSpec {
             }
             BoreType.HEX -> add(number("hex_flats", "Hex across flats", ParamGroup.GEOMETRY, 2.0, 30.0, 2, "mm",
                 help = "Distance across the flats of the hexagonal bore."))
+            BoreType.SQUARE -> add(number("square_flats", "Square across flats", ParamGroup.GEOMETRY, 2.0, 30.0, 2, "mm",
+                help = "Distance across the flats of the square bore."))
             else -> {}
         }
     }
@@ -303,6 +308,46 @@ object GearSpec {
     )
 
     private fun structuralFields(p: GearParams): List<ParamDef> = teethFields() + lighteningFields(p)
+
+    /** Two-stage compound gear: Stage 1, Stage 2, the spacer and the shared bore. */
+    private fun compoundFields(p: GearParams): List<ParamDef> = buildList {
+        add(choice("unit", "Units", ParamGroup.GEOMETRY, UNITS,
+            help = "Switch between metric module and imperial diametral pitch."))
+        val moduleMin = if (p.unit == UnitSystem.INCH) 25.4 / 12.0 else 0.2
+        val moduleMax = if (p.unit == UnitSystem.INCH) 25.4 / 0.2 else 12.0
+        val moduleLabel = if (p.unit == UnitSystem.INCH) "Diametral pitch (1/in)" else "Module (mm)"
+        // ---- Stage 1 ----
+        add(number("module", "Stage 1 " + moduleLabel.lowercase(), ParamGroup.GEOMETRY, moduleMin, moduleMax, 3,
+            if (p.unit == UnitSystem.INCH) "1/in" else "mm",
+            help = "Module of the first (primary) stage."))
+        add(number("teeth", "Stage 1 teeth", ParamGroup.GEOMETRY, 5.0, 200.0, 0,
+            help = "Number of teeth on the first stage."))
+        add(number("thickness", "Stage 1 face width", ParamGroup.GEOMETRY, 1.0, 50.0, 2, "mm",
+            help = "Face width of the first stage."))
+        add(number("pressure_angle", "Pressure angle", ParamGroup.GEOMETRY, 14.0, 30.0, 2, "\u00b0",
+            help = "Flank pressure angle shared by both stages."))
+        val backlashMax = max(0.05, 0.25 * PI * p.module)
+        add(number("backlash", "Backlash", ParamGroup.GEOMETRY, 0.0, backlashMax, 3, "mm",
+            help = "Clearance between mating teeth."))
+        // ---- Stage 2 ----
+        add(number("stage2_module", "Stage 2 " + moduleLabel.lowercase(), ParamGroup.GEOMETRY, moduleMin, moduleMax, 3,
+            if (p.unit == UnitSystem.INCH) "1/in" else "mm",
+            help = "Module of the second stage; may differ from stage 1."))
+        add(number("stage2_teeth", "Stage 2 teeth", ParamGroup.GEOMETRY, 5.0, 200.0, 0,
+            help = "Number of teeth on the second stage."))
+        add(number("stage2_face_width", "Stage 2 face width", ParamGroup.GEOMETRY, 1.0, 50.0, 2, "mm",
+            help = "Face width of the second stage."))
+        add(number("stage2_phase", "Stage 2 tooth phase", ParamGroup.GEOMETRY, -360.0, 360.0, 0, "\u00b0",
+            help = "Rotation of the second stage's teeth relative to the first stage."))
+        // ---- Spacer ----
+        add(number("spacer_height", "Spacer height", ParamGroup.GEOMETRY, 0.0, 50.0, 2, "mm",
+            help = "Height of the hub between the two stages; 0 = flush transition."))
+        add(number("spacer_diameter", "Spacer diameter", ParamGroup.GEOMETRY, 0.0, 200.0, 2, "mm",
+            help = "Outer diameter of the inter-stage hub; 0 = automatic clearance."))
+        addAll(boreFields(p))
+        addAll(materialFields())
+        addAll(toleranceFields())
+    }
 
     private fun beltFields(): List<ParamDef> = buildList {
         add(choice("belt_profile", "Belt profile", ParamGroup.GEOMETRY,
@@ -371,8 +416,8 @@ object GearSpec {
                     help = "Number of thread starts on the worm."),
                 number("wheel_teeth", "Wheel teeth", ParamGroup.GEOMETRY, 10.0, 200.0, 0,
                     help = "Teeth on the worm wheel."),
-                number("helix_angle", "Lead angle", ParamGroup.GEOMETRY, 5.0, 85.0, 2, "\u00b0",
-                    help = "Lead angle of the worm thread.")
+                number("helix_angle", "Helix angle", ParamGroup.GEOMETRY, 5.0, 85.0, 2, "\u00b0",
+                    help = "Angle of the worm thread relative to the worm axis (measured from the axis).")
             ) + materialFields() + toleranceFields() + loadFields()
 
         GearType.INTERNAL_RING -> commonGeometry(p, includeToothProfile = false) + hubFields(p) +
@@ -400,12 +445,15 @@ object GearSpec {
                 help = "Angle of the teeth relative to the gear axis.")) +
             profileFields(p) + boreFields(p) + materialFields() + toleranceFields() + loadFields()
 
+        GearType.COMPOUND -> compoundFields(p)
+
         GearType.BELT -> beltFields()
         }
         // Belt drives and racks are not single gear bodies; their structural fields
         // (lightening, spokes, pockets, index marks) and per-tooth overrides do not
-        // apply to the generated geometry, so they are omitted entirely.
-        return if (hasGearBody(p.gearType)) base + structuralFields(p) else base
+        // apply to the generated geometry, so they are omitted entirely. Compound gears
+        // have their own self-contained field set and skip the shared structural fields.
+        return if (hasGearBody(p.gearType) && p.gearType != GearType.COMPOUND) base + structuralFields(p) else base
     }
 
     // ---- number read/write ----------------------------------------------
@@ -447,6 +495,7 @@ object GearSpec {
         "keyway_width" -> p.bore.keywayWidth
         "keyway_depth" -> p.bore.keywayDepth
         "hex_flats" -> p.bore.hexAcrossFlats
+        "square_flats" -> p.bore.squareAcrossFlats
         "cone_angle" -> p.coneAngleDeg
         "pitch_cone" -> p.pitchConeDeg
         "mounting_distance" -> p.mountingDistance
@@ -470,6 +519,13 @@ object GearSpec {
         "belt_backlash" -> p.beltBacklashMm
         "belt_flanges" -> p.beltFlangeCount.toDouble()
         "belt_idler_count" -> p.beltIdlerCount.toDouble()
+        "stage2_module" -> if (p.unit == UnitSystem.INCH) GearCalculator.moduleToDiametralPitch(p.stage2Module) else p.stage2Module
+        "stage2_teeth" -> p.stage2Teeth.toDouble()
+        "stage2_face_width" -> p.stage2FaceWidth
+        "stage2_pressure_angle" -> p.stage2PressureAngleDeg
+        "stage2_phase" -> p.stage2PhaseDeg
+        "spacer_height" -> p.spacerHeight
+        "spacer_diameter" -> p.spacerDiameter
         else -> 0.0
     }
 
@@ -515,6 +571,7 @@ object GearSpec {
         "keyway_width" -> p.copy(bore = p.bore.copy(keywayWidth = v))
         "keyway_depth" -> p.copy(bore = p.bore.copy(keywayDepth = v))
         "hex_flats" -> p.copy(bore = p.bore.copy(hexAcrossFlats = v))
+        "square_flats" -> p.copy(bore = p.bore.copy(squareAcrossFlats = v))
         "cone_angle" -> p.copy(coneAngleDeg = v)
         "pitch_cone" -> p.copy(pitchConeDeg = v)
         "mounting_distance" -> p.copy(mountingDistance = v)
@@ -538,6 +595,13 @@ object GearSpec {
         "belt_backlash" -> p.copy(beltBacklashMm = v)
         "belt_flanges" -> p.copy(beltFlangeCount = v.roundToInt().coerceIn(0, 4))
         "belt_idler_count" -> p.copy(beltIdlerCount = v.roundToInt().coerceIn(0, 4))
+        "stage2_module" -> p.copy(stage2Module = (if (p.unit == UnitSystem.INCH) GearCalculator.diametralPitchToModule(v) else v).coerceIn(0.2, 12.0))
+        "stage2_teeth" -> p.copy(stage2Teeth = v.roundToInt().coerceIn(3, 300))
+        "stage2_face_width" -> p.copy(stage2FaceWidth = v.coerceIn(0.1, 500.0))
+        "stage2_pressure_angle" -> p.copy(stage2PressureAngleDeg = v)
+        "stage2_phase" -> p.copy(stage2PhaseDeg = v)
+        "spacer_height" -> p.copy(spacerHeight = v)
+        "spacer_diameter" -> p.copy(spacerDiameter = v)
         else -> p
         }).coerced() // cap loop-driving counts/dimensions consistently
     }
@@ -551,6 +615,7 @@ object GearSpec {
             BoreType.D_CUT -> "D-cut"
             BoreType.KEYWAY -> "Keyway"
             BoreType.HEX -> "Hex"
+            BoreType.SQUARE -> "Square"
         }
         "material" -> p.material
         "tolerance" -> p.toleranceClass
@@ -577,6 +642,7 @@ object GearSpec {
             "D-cut" -> BoreType.D_CUT
             "Keyway" -> BoreType.KEYWAY
             "Hex" -> BoreType.HEX
+            "Square" -> BoreType.SQUARE
             else -> BoreType.NONE
         }))
         "material" -> p.copy(material = v)
@@ -623,16 +689,20 @@ object GearSpec {
         val z = p.teeth
         val unit = if (p.unit == UnitSystem.INCH) "in" else "mm"
         fun d(v: Double) = "${fmt(p.conv(v), 3)} $unit"
+        // Transverse module for helical gears (the profile is generated in the
+        // transverse plane): m_t = m_n / cos β (ISO 21771).
+        val mt = if (p.gearType == GearType.HELICAL && p.helixAngleDeg != 0.0)
+            m / Math.cos(Math.toRadians(p.helixAngleDeg)) else m
         val base = when (type) {
             GearType.SPUR, GearType.HELICAL, GearType.CYCLOIDAL, GearType.FACE_GEAR, GearType.SCREW_GEAR -> listOf(
-                "result_pitch_diameter" to d(GearCalculator.pitchDiameter(m, z)),
-                "result_outer_diameter" to d(GearCalculator.outerDiameter(m, z)),
-                "result_root_diameter" to d(GearCalculator.rootDiameter(m, z)),
-                "result_base_diameter" to d(2.0 * GearCalculator.baseRadius(m, z, p.pressureAngleDeg))
+                "result_pitch_diameter" to d(mt * z),
+                "result_outer_diameter" to d(2.0 * GearCalculator.tipRadiusShifted(mt, z, p.addendumCoef, p.profileShift)),
+                "result_root_diameter" to d(2.0 * GearCalculator.rootRadiusShifted(mt, z, p.dedendumCoef, p.profileShift)),
+                "result_base_diameter" to d(mt * z * Math.cos(Math.toRadians(p.pressureAngleDeg)))
             )
             GearType.BEVEL, GearType.HYPOID -> listOf(
-                "result_pitch_diameter" to d(GearCalculator.pitchDiameter(m, z)),
-                "result_outer_diameter" to d(GearCalculator.outerDiameter(m, z)),
+                "result_pitch_diameter" to d(mt * z),
+                "result_outer_diameter" to d(2.0 * GearCalculator.tipRadiusShifted(mt, z, p.addendumCoef, p.profileShift)),
                 "result_cone_angle" to "${fmt(p.coneAngleDeg, 2)}\u00b0"
             )
             GearType.RACK -> listOf(
@@ -657,6 +727,12 @@ object GearSpec {
             GearType.HARMONIC_DRIVE -> listOf(
                 "result_flexspline_teeth" to z.toString(),
                 "result_pitch_diameter" to d(GearCalculator.pitchDiameter(m, z))
+            )
+            GearType.COMPOUND -> listOf(
+                "result_pitch_diameter" to d(mt * z),
+                "result_stage2_pitch_dia" to d(p.stage2Module * p.stage2Teeth),
+                "result_ratio" to fmt(p.stage2Teeth.toDouble() / z, 3),
+                "result_total_height" to d(p.thickness + p.spacerHeight + p.stage2FaceWidth)
             )
             GearType.BELT -> {
                 val t = p.toBeltTransmission()
@@ -692,18 +768,105 @@ object GearSpec {
             add(GearWarning(WARN_MODULE))
         }
 
-        // Helix angle approaching 90° makes tan(angle) blow up and the loft degenerate.
+        // Tooth count outside the supported range is clamped by coerced() (involute ≥ 8,
+        // cycloid ≥ 6, straight ≥ 5, max 300); surface the clamp.
+        if (hasGearBody(p.gearType)) {
+            val minTeeth = when (p.toothProfile) {
+                ToothProfile.CYCLOID -> 6
+                ToothProfile.STRAIGHT -> 5
+                ToothProfile.INVOLUTE -> 8
+            }
+            if (p.teeth < minTeeth || p.teeth > 300) {
+                add(GearWarning(WARN_TEETH, detail = "$minTeeth..300"))
+            }
+        }
+
+        // Profile shift outside ±1 is clamped by coerced() (degenerate teeth beyond).
+        if (p.profileShift < -1.0 || p.profileShift > 1.0) {
+            add(GearWarning(WARN_PROFILE_SHIFT))
+        }
+
+        // Helix angle beyond ±85° is clamped by coerced(); warn before the loft degenerates.
         val usesHelix = p.gearType == GearType.HELICAL ||
             p.gearType == GearType.WORM_PAIR ||
             p.gearType == GearType.SCREW_GEAR
-        if (usesHelix && p.helixAngleDeg >= 89.0) {
+        if (usesHelix && kotlin.math.abs(p.helixAngleDeg) > 85.0) {
             add(GearWarning(WARN_HELIX_ANGLE))
         }
 
-        // Backlash must stay below a quarter of the tooth pitch, otherwise it can invert
-        // or self-intersect teeth at small module (audit C2).
-        if (p.backlash > 0.25 * PI * p.module) {
+        // Undercut: an involute flank below z_min = 2/sin²α cuts into the root unless
+        // a positive profile shift x ≥ 1 − z·sin²α/2 is applied (ISO 21771 / KHK).
+        // A 0.1 shift margin suppresses the warning for negligible undercut (e.g. the
+        // 16-tooth helical default sits only 0.06 below the threshold).
+        val involuteBody = p.gearType in setOf(GearType.SPUR, GearType.HELICAL) &&
+            p.toothProfile == ToothProfile.INVOLUTE
+        if (involuteBody) {
+            val xMin = GearCalculator.minimumShiftNoUndercut(p.teeth, p.pressureAngleDeg)
+            if (p.profileShift < xMin - 0.1) {
+                add(GearWarning(WARN_UNDERCUT, detail = "x_min = " + String.format("%.2f", xMin)))
+            }
+        }
+
+        // Backlash must stay below 0.2·m (spec), otherwise it can invert or
+        // self-intersect teeth at small module (audit C2). The percentage-of-module
+        // form is honoured through [GearParams.effectiveBacklashMm].
+        val effBacklash = p.effectiveBacklashMm()
+        if (effBacklash > 0.2 * p.module) {
             add(GearWarning(WARN_BACKLASH))
+        }
+
+        // Tooth top-land thinning: excessive backlash or negative profile shift can
+        // thin the tip below the printable/strength limit. The minimum width is
+        // configurable and defaults to 0.2·m (audit B2).
+        val extInvolute = p.toothProfile == ToothProfile.INVOLUTE &&
+            p.gearType !in setOf(GearType.RACK, GearType.BELT, GearType.INTERNAL_RING, GearType.WORM_PAIR)
+        if (extInvolute) {
+            val minTopLand = if (p.minimumTopLandWidth > 0.0) p.minimumTopLandWidth else 0.2 * p.module
+            if (GearCalculator.topLandWidth(p) < minTopLand) {
+                add(GearWarning(WARN_TOPLAND, detail = "min " + String.format("%.2f", minTopLand)))
+            }
+        }
+
+        // Tooth overlap: at high pressure angles the involute flank is so flat that
+        // the tooth is wider at the root than the tooth space, so adjacent teeth
+        // physically overlap and the outline self-intersects (audit H3: α=45°, z=20).
+        // Flag it when the generated tooth arc thickness at the flank start radius
+        // (max of base and root circle) reaches the arc pitch.
+        if (involuteBody) {
+            val rb = GearCalculator.baseRadius(p.module, p.teeth, p.pressureAngleDeg)
+            val rf = GearCalculator.rootRadiusShifted(p.module, p.teeth, p.dedendumCoef, p.profileShift)
+            val rStart = max(rb, rf)
+            if (rStart > 0.0) {
+                val arcPitch = 2.0 * PI * rStart / p.teeth
+                if (GearCalculator.toothThicknessAtRadius(p, rStart) >= arcPitch) {
+                    add(GearWarning(WARN_TOOTH_OVERLAP))
+                }
+            }
+        }
+
+        // Compound gear: both stages must fit the bore, and the spacer must stay clear
+        // of the teeth and of the bore wall (audit: dubbelkugghjul).
+        if (p.gearType == GearType.COMPOUND) {
+            if (p.stage2Teeth < 8 || p.stage2Teeth > 300) {
+                add(GearWarning(WARN_TEETH, detail = "stage 2: 8..300"))
+            }
+            if (p.stage2FaceWidth <= 0.0) {
+                add(GearWarning(WARN_TEETH, detail = "stage 2 face width must be > 0"))
+            }
+            val r1 = GearCalculator.rootRadiusShifted(p.module, p.teeth, p.dedendumCoef, p.profileShift)
+            val r2 = GearCalculator.rootRadiusShifted(p.stage2Module, p.stage2Teeth, p.dedendumCoef, p.stage2ProfileShift)
+            if (p.bore.type != BoreType.NONE) {
+                val minWall = max(0.6, 0.4 * maxOf(p.module, p.stage2Module))
+                if (Bore.boreOuterRadius(p) >= minOf(r1, r2) - minWall) {
+                    add(GearWarning(WARN_BORE))
+                }
+            }
+            if (p.spacerDiameter > 0.0) {
+                val rDisc = p.spacerDiameter / 2.0
+                if (rDisc <= Bore.boreOuterRadius(p) + 0.2 || rDisc >= minOf(r1, r2) - 0.2) {
+                    add(GearWarning(WARN_SPACER, detail = "spacer must clear the bore and both tooth roots"))
+                }
+            }
         }
 
         // Bore larger than the gear body cuts away the teeth entirely. Only single-gear
@@ -711,9 +874,16 @@ object GearSpec {
         val cutsBore = p.gearType != GearType.RACK && p.gearType != GearType.BELT &&
             p.gearType != GearType.INTERNAL_RING && p.gearType != GearType.WORM_PAIR
         if (p.bore.type != BoreType.NONE && cutsBore) {
-            val rootD = GearCalculator.rootDiameter(p.module, p.teeth)
-            val boreD = if (p.bore.type == BoreType.HEX) p.bore.hexAcrossFlats else p.bore.diameter
-            if (rootD > 0.0 && boreD >= rootD) {
+            val rootD = 2.0 * GearCalculator.rootRadiusShifted(p.module, p.teeth, p.dedendumCoef, p.profileShift)
+            val boreD = when (p.bore.type) {
+                BoreType.HEX -> p.bore.hexAcrossFlats
+                BoreType.SQUARE -> p.bore.squareAcrossFlats
+                else -> p.bore.diameter
+            }
+            // Keep a printable wall of material between the bore and the tooth root
+            // (twice the minimum wall thickness).
+            val minWall = max(0.6, 0.4 * p.module)
+            if (rootD > 0.0 && boreD >= rootD - 2.0 * minWall) {
                 add(GearWarning(WARN_BORE))
             }
         }
@@ -721,12 +891,17 @@ object GearSpec {
         // Planetary assembly relationships.
         if (p.gearType == GearType.PLANETARY) {
             val minRing = p.teeth + 2 * p.planetTeeth
-            // A ring smaller than sun + 2*planet cannot mesh (builder clamps it up).
-            if (p.ringTeeth < minRing) {
-                add(GearWarning(WARN_RING_TEETH))
+            // The builder forces Zr = Zs + 2·Zp; warn when the user value differs.
+            if (p.ringTeeth != minRing) {
+                add(GearWarning(WARN_RING_TEETH, detail = "ring forced to $minRing teeth"))
+            }
+            // Equally-spaced planets require (Zs + Zr) / N to be an integer; otherwise
+            // the planets cannot mesh with both sun and ring simultaneously.
+            val n = p.planetCount
+            if (n >= 2 && (p.teeth + minRing) % n != 0) {
+                add(GearWarning(WARN_PLANET_PHASE, detail = "uneven planet phasing with $n planets"))
             }
             // Adjacent planet gears must not overlap.
-            val n = p.planetCount
             if (n >= 2) {
                 val centerDist = GearCalculator.centerDistance(p.module, p.teeth, p.planetTeeth)
                 val planetOuter = GearCalculator.outerRadius(p.module, p.planetTeeth)
@@ -766,7 +941,11 @@ object GearSpec {
         val hubR = GearCalculator.effectiveHubRight(p)
         val hasHub = hubL > 0.0 || hubR > 0.0
         if (hasHub) {
-            val boreD = if (p.bore.type == BoreType.HEX) p.bore.hexAcrossFlats else p.bore.diameter
+            val boreD = when (p.bore.type) {
+                BoreType.HEX -> p.bore.hexAcrossFlats
+                BoreType.SQUARE -> p.bore.squareAcrossFlats
+                else -> p.bore.diameter
+            }
             // Hard error: hub wall thinner than the minimum.
             if (p.hubDiameter < boreD + 2.0 * MIN_HUB_WALL) {
                 add(GearWarning(WARN_HUB_WALL, severity = GearSeverity.ERROR))
@@ -777,7 +956,7 @@ object GearSpec {
                 add(GearWarning(WARN_HUB_CHAMFER, severity = GearSeverity.ERROR))
             }
             // Warning: hub covers the tooth root (cuts the teeth).
-            val rootD = GearCalculator.rootDiameter(p.module, p.teeth)
+            val rootD = 2.0 * GearCalculator.rootRadiusShifted(p.module, p.teeth, p.dedendumCoef, p.profileShift)
             if (rootD > 0.0 && p.hubDiameter >= rootD) {
                 add(GearWarning(WARN_HUB_COVERS_ROOT))
             }
@@ -785,6 +964,15 @@ object GearSpec {
         // Grub screws require hub material.
         if (p.setScrewCount > 0 && !hasHub) {
             add(GearWarning(WARN_GRUB_NO_HUB, severity = GearSeverity.ERROR))
+        }
+        // Set screws need enough hub wall for the radial clearance hole plus a printable
+        // wall; hard error when the hub diameter is insufficient (audit B3).
+        if (p.setScrewCount > 0 && hasHub) {
+            val wall = p.hubDiameter / 2.0 - Bore.boreOuterRadius(p)
+            val need = HubBuilder.screwMinorRadius(p.setScrewThread) + MIN_HUB_WALL
+            if (wall < need) {
+                add(GearWarning(WARN_SETSCREW, detail = "needs " + String.format("%.1f", need) + " mm wall", severity = GearSeverity.ERROR))
+            }
         }
         // Per-tooth overrides: thickness must keep a positive gap and angles must stay < 90°.
         val nominalThick = PI * p.module / 2.0

@@ -1,7 +1,9 @@
 package com.gearforge.core
 
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 /** Mesh utilities: face normals, centroid, signed volume and orientation normalization. */
 object MeshOps {
@@ -57,6 +59,28 @@ object MeshOps {
                 + a.z * (b.x * c.y - b.y * c.x)) / 6.0
         }
         return v
+    }
+
+    /** Rotates a mesh about the Z axis (in the XY plane) by [angleRad]. */
+    fun rotateZ(mesh: Mesh, angleRad: Double): Mesh {
+        if (angleRad == 0.0 || mesh.vertices.isEmpty()) return mesh
+        val ca = cos(angleRad)
+        val sa = sin(angleRad)
+        return Mesh(
+            mesh.vertices.map { Vec3(it.x * ca - it.y * sa, it.x * sa + it.y * ca, it.z) },
+            mesh.triangles
+        )
+    }
+
+    /** Rotates a mesh about the Y axis by [angleRad] (maps the Z axis onto the X axis at 90°). */
+    fun rotateY(mesh: Mesh, angleRad: Double): Mesh {
+        if (angleRad == 0.0 || mesh.vertices.isEmpty()) return mesh
+        val ca = cos(angleRad)
+        val sa = sin(angleRad)
+        return Mesh(
+            mesh.vertices.map { Vec3(it.x * ca + it.z * sa, it.y, -it.x * sa + it.z * ca) },
+            mesh.triangles
+        )
     }
 
     /** Concatenates multiple meshes (with no placement offsets) into a single mesh. */
@@ -138,5 +162,91 @@ object MeshOps {
         } else {
             oriented
         }
+    }
+
+    /**
+     * Result of the export pre-flight mesh-integrity pass.
+     * [issues] is empty for a closed, manifold, print-ready solid.
+     */
+    data class MeshValidation(val issues: List<String>) {
+        val isValid: Boolean get() = issues.isEmpty()
+    }
+
+    /**
+     * Validates that a mesh is a closed, manifold solid suitable for STL export:
+     *  - non-empty and with all triangle indices in range
+     *  - no duplicate vertices (within [tolerance])
+     *  - no degenerate / zero-area triangles
+     *  - every edge shared by exactly two faces (closed 2-manifold)
+     *  - positive, finite signed volume with consistent outward normals
+     *
+     * Self-intersection is intentionally not detected here (it is an O(n²)
+     * triangle-triangle problem); the remaining checks catch the defects that
+     * actually make a mesh unprintable.
+     */
+    fun validate(mesh: Mesh, tolerance: Double = 1e-6): MeshValidation {
+        val issues = ArrayList<String>()
+        if (mesh.vertices.isEmpty()) { issues.add("mesh has no vertices"); return MeshValidation(issues) }
+        if (mesh.triangles.isEmpty()) { issues.add("mesh has no triangles"); return MeshValidation(issues) }
+
+        // 1. Indices in range.
+        val vCount = mesh.vertices.size
+        var outOfRange = 0
+        for (t in mesh.triangles) for (i in t) if (i < 0 || i >= vCount) outOfRange++
+        if (outOfRange > 0) issues.add("$outOfRange triangle indices out of range")
+
+        // 2. Duplicate vertices within tolerance (spatial grid, O(n) average).
+        val grid = HashMap<String, MutableList<Vec3>>()
+        var dupes = 0
+        for (v in mesh.vertices) {
+            val gx = Math.floor(v.x / tolerance).toLong()
+            val gy = Math.floor(v.y / tolerance).toLong()
+            val gz = Math.floor(v.z / tolerance).toLong()
+            var found = false
+            outer@ for (dx in -1L..1L) for (dy in -1L..1L) for (dz in -1L..1L) {
+                val cell = grid["${gx + dx},${gy + dy},${gz + dz}"] ?: continue
+                for (w in cell) if (v.dist(w) < tolerance) { found = true; break@outer }
+            }
+            if (found) dupes++ else grid.getOrPut("$gx,$gy,$gz") { mutableListOf() }.add(v)
+        }
+        if (dupes > 0) issues.add("$dupes duplicate vertices within $tolerance mm")
+
+        // 3. Degenerate / zero-area triangles.
+        var degenerate = 0
+        for ((i, t) in mesh.triangles.withIndex()) {
+            val a = mesh.vertices[t[0]]
+            val b = mesh.vertices[t[1]]
+            val c = mesh.vertices[t[2]]
+            if ((b - a).cross(c - a).length() < 1e-12) degenerate++
+        }
+        if (degenerate > 0) issues.add("$degenerate degenerate (zero-area) triangles")
+
+        // 4. Closed manifold: every edge shared by exactly two faces.
+        val edgeCount = HashMap<Long, Int>()
+        fun key(a: Int, b: Int): Long {
+            val lo = min(a, b).toLong()
+            val hi = max(a, b).toLong()
+            return (lo shl 32) or hi
+        }
+        for (t in mesh.triangles) for (e in 0 until 3) {
+            val k = key(t[e], t[(e + 1) % 3])
+            edgeCount[k] = (edgeCount[k] ?: 0) + 1
+        }
+        var nonManifold = 0
+        var openEdges = 0
+        for ((k, cnt) in edgeCount) {
+            if (cnt != 2) {
+                nonManifold++
+                if (cnt == 1) openEdges++
+            }
+        }
+        if (openEdges > 0) issues.add("$openEdges open boundary edges (mesh is not closed)")
+        if (nonManifold > 0) issues.add("$nonManifold non-manifold edges (each edge must be shared by exactly 2 faces)")
+
+        // 5. Positive finite volume (outward normals).
+        val vol = signedVolume(mesh)
+        if (!vol.isFinite() || vol <= 0.0) issues.add("signed volume is ${if (vol.isFinite()) "non-positive" else "non-finite"} (normals inverted or open mesh)")
+
+        return MeshValidation(issues)
     }
 }

@@ -1,6 +1,7 @@
 package com.gearforge.core
 
 import kotlin.math.PI
+import kotlin.math.acos
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -20,6 +21,33 @@ object GearCalculator {
     fun rootDiameter(module: Double, teeth: Int) = module * (teeth - 2.0 * STANDARD_DEDENDUM)
     fun baseRadius(module: Double, teeth: Int, pressureAngleDeg: Double) =
         module * teeth / 2.0 * cos(Math.toRadians(pressureAngleDeg))
+
+    /**
+     * Pitch diameter of a gear body. For helical gears the user-facing module is the
+     * NORMAL module m_n, so the transverse pitch diameter is used (ISO 21771):
+     * d = m_t·z = m_n·z / cos β.
+     */
+    fun pitchDiameter(p: GearParams): Double =
+        if (p.gearType == GearType.HELICAL && p.helixAngleDeg != 0.0)
+            p.module * p.teeth / cos(Math.toRadians(p.helixAngleDeg))
+        else p.module * p.teeth
+
+    /**
+     * Tip (addendum) radius in the PROFILE plane with profile shift x:
+     * r_a = m·z/2 + m·(h_a* + x). [module] is the module of the plane being generated
+     * (the transverse module m_t for helical gears, which is what the profile
+     * generator feeds in after converting m_n → m_t).
+     */
+    fun tipRadiusShifted(module: Double, teeth: Int, addendumCoef: Double, shift: Double): Double =
+        module * teeth / 2.0 + module * (addendumCoef + shift)
+
+    /**
+     * Root (dedendum) radius in the PROFILE plane with profile shift x:
+     * r_f = m·z/2 − m·(h_f* − x). A positive shift raises the root; a negative shift
+     * deepens it (undercut).
+     */
+    fun rootRadiusShifted(module: Double, teeth: Int, dedendumCoef: Double, shift: Double): Double =
+        module * teeth / 2.0 - module * (dedendumCoef - shift)
 
     /** Distance between the centres of two meshing external gears. */
     fun centerDistance(module: Double, teethA: Int, teethB: Int) =
@@ -41,6 +69,45 @@ object GearCalculator {
 
     /** Involute function inv(phi) = tan(phi) - phi. */
     fun involute(phi: Double) = tan(phi) - phi
+
+    /**
+     * Minimum tooth count before the involute undercuts a full-depth gear
+     * (ISO 21771 / KHK): z_min = 2 / sin²(α). For α = 20°, z_min ≈ 17.1.
+     */
+    fun undercutThresholdTeeth(pressureAngleDeg: Double): Double {
+        val s = sin(Math.toRadians(pressureAngleDeg))
+        return 2.0 / (s * s)
+    }
+
+    /**
+     * Minimum profile shift that fully avoids undercut for a full-depth gear
+     * (h_a* = 1, ISO 21771): x_min = 1 − z·sin²(α) / 2.
+     */
+    fun minimumShiftNoUndercut(teeth: Int, pressureAngleDeg: Double): Double {
+        val s = sin(Math.toRadians(pressureAngleDeg))
+        return 1.0 - teeth * s * s / 2.0
+    }
+
+    /**
+     * Tooth thickness (arc length) at an arbitrary radius (ISO 21771 / KHK):
+     * s_r = r·(s_p/r_p − 2·(inv α_r − inv α)) with α_r = acos(r_b / r).
+     * The pitch thickness s_p includes profile shift and subtracts the effective
+     * backlash, so this returns the generated (clearance-adjusted) thickness.
+     */
+    fun toothThicknessAtRadius(p: GearParams, radius: Double): Double {
+        val rp = pitchRadius(p.module, p.teeth)
+        val sP = PI * p.module / 2.0 +
+            2.0 * p.profileShift * p.module * tan(Math.toRadians(p.pressureAngleDeg)) -
+            p.effectiveBacklashMm()
+        val rb = baseRadius(p.module, p.teeth, p.pressureAngleDeg)
+        val invA = involute(Math.toRadians(p.pressureAngleDeg))
+        val invAr = involute(acos((rb / radius).coerceIn(-1.0, 1.0)))
+        return radius * (sP / rp - 2.0 * (invAr - invA))
+    }
+
+    /** Top-land (tooth tip) width; 0 when the tip would degenerate. */
+    fun topLandWidth(p: GearParams): Double =
+        max(0.0, toothThicknessAtRadius(p, tipRadiusShifted(p.module, p.teeth, p.addendumCoef, p.profileShift)))
 
     /** Polar angle (rad) on the involute of a base circle at a given radius. */
     fun involutePolarAngle(baseRadius: Double, radius: Double, pressureAngleAtRadius: Double): Double {
@@ -163,7 +230,7 @@ object GearCalculator {
         // Nominal tooth + gap = π·m; a thicker tooth (override) shrinks the gap.
         val nominalThick = PI * p.module / 2.0
         val maxThick = p.toothOverrides.values.mapNotNull { it.toothThickness }.maxOrNull() ?: nominalThick
-        return max(0.0, p.backlash + (nominalThick - maxThick))
+        return max(0.0, p.effectiveBacklashMm() + (nominalThick - maxThick))
     }
 }
 

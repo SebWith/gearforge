@@ -16,12 +16,33 @@ object Bore {
         if (b.type == BoreType.NONE) return emptyList()
         val hole = when (b.type) {
             BoreType.ROUND -> round(b.diameter / 2.0)
-            BoreType.D_CUT -> dCut(b.diameter / 2.0, b.dCutFlatOffset)
-            BoreType.KEYWAY -> keyway(b.diameter / 2.0, b.keywayWidth, b.keywayDepth)
+            BoreType.D_CUT -> if (b.dCutSecondFlat) doubleDCut(b.diameter / 2.0, b.dCutFlatOffset)
+                else dCut(b.diameter / 2.0, b.dCutFlatOffset)
+            BoreType.KEYWAY -> {
+                val spec = if (b.keywayStandard) KeywayStandard.spec(b.diameter)
+                    else KeywayStandard.Spec(b.keywayWidth, b.keywayDepth)
+                keyway(b.diameter / 2.0, spec.width, spec.depth)
+            }
             BoreType.HEX -> hex(b.hexAcrossFlats / 2.0)
+            BoreType.SQUARE -> square(b.squareAcrossFlats / 2.0)
             BoreType.NONE -> emptyList()
         }
         return if (hole.isEmpty()) emptyList() else listOf(hole)
+    }
+
+    /**
+     * The maximum radial extent of the bore cutout. Plain round/D-cut bores reach
+     * the bore radius; a keyway slot protrudes by [BoreSpec.keywayDepth] and a hex
+     * bore reaches its corners at acrossFlats/2 ÷ cos 30°. Structural cutouts
+     * (spokes, lightening holes) must stay outside this radius or they will
+     * intersect the bore hole and break the triangulation (audit L5).
+     */
+    fun boreOuterRadius(p: GearParams): Double = when (p.bore.type) {
+        BoreType.NONE -> 0.0
+        BoreType.ROUND, BoreType.D_CUT -> p.bore.diameter / 2.0
+        BoreType.KEYWAY -> p.bore.diameter / 2.0 + p.bore.keywayDepth
+        BoreType.HEX -> (p.bore.hexAcrossFlats / 2.0) / cos(PI / 6.0)
+        BoreType.SQUARE -> (p.bore.squareAcrossFlats / 2.0) * sqrt(2.0)
     }
 
     fun round(r: Double, segments: Int = 48): List<Vec2> =
@@ -43,6 +64,25 @@ object Bore {
         return pts
     }
 
+    /**
+     * Double-D bore: a circle with two parallel flats at ±[flatOffset] (NEMA stepper
+     * shaft style). The flats are the horizontal chords at y = ±off; the remaining
+     * arcs keep the full bore radius.
+     */
+    fun doubleDCut(r: Double, flatOffset: Double): List<Vec2> {
+        val off = flatOffset.coerceIn(0.0, r)
+        val beta = asin((off / r).coerceIn(-1.0, 1.0))
+        val x0 = sqrt(max(0.0, r * r - off * off))
+        val n = 24
+        val pts = ArrayList<Vec2>()
+        pts.add(Vec2(x0, off))                       // top-right (θ = β)
+        pts.add(Vec2(-x0, off))                      // top flat → top-left (θ = π − β)
+        for (k in 1..n) pts.add(Vec2.polar(r, (PI - beta) + 2.0 * beta * k / n)) // left arc → θ = π + β
+        pts.add(Vec2(x0, -off))                      // bottom flat → bottom-right (θ = 2π − β)
+        for (k in 1..n) pts.add(Vec2.polar(r, (2.0 * PI - beta) + 2.0 * beta * k / n)) // right arc → θ = 2π + β
+        return pts
+    }
+
     fun keyway(r: Double, width: Double, depth: Double): List<Vec2> {
         val half = width / 2.0
         val beta = asin((half / r).coerceIn(-1.0, 1.0))
@@ -61,6 +101,35 @@ object Bore {
     fun hex(apothem: Double): List<Vec2> {
         val r = apothem / cos(PI / 6.0)
         return (0 until 6).map { k -> Vec2.polar(r, PI / 6.0 + 2.0 * PI * k / 6.0) }
+    }
+
+    fun square(halfSide: Double): List<Vec2> =
+        listOf(
+            Vec2(-halfSide, -halfSide),
+            Vec2(halfSide, -halfSide),
+            Vec2(halfSide, halfSide),
+            Vec2(-halfSide, halfSide)
+        )
+
+    /**
+     * DIN 6885 hub keyway dimensions for a given shaft/bore diameter. [Spec.width] is
+     * the key width b and [Spec.depth] the hub keyway depth t1 measured from the bore
+     * wall (the key seat depth). Standard ranges below follow DIN 6885-1.
+     */
+    object KeywayStandard {
+        data class Spec(val width: Double, val depth: Double)
+
+        fun spec(boreDiameter: Double): Spec = when {
+            boreDiameter <= 8.0 -> Spec(2.0, 1.0)
+            boreDiameter <= 10.0 -> Spec(3.0, 1.4)
+            boreDiameter <= 12.0 -> Spec(4.0, 1.8)
+            boreDiameter <= 17.0 -> Spec(5.0, 2.3)
+            boreDiameter <= 22.0 -> Spec(6.0, 2.8)
+            boreDiameter <= 30.0 -> Spec(8.0, 3.3)
+            boreDiameter <= 38.0 -> Spec(10.0, 3.3)
+            boreDiameter <= 44.0 -> Spec(12.0, 3.3)
+            else -> Spec(14.0, 3.8)
+        }
     }
 
     /**
@@ -86,12 +155,12 @@ object Bore {
     fun lighteningPlan(p: GearParams): LighteningPlan {
         val requestedCount = p.lighteningHoleCount
         if (requestedCount <= 0) return LighteningPlan()
-        val rRoot = GearCalculator.rootRadius(p.module, p.teeth)
+        val rRoot = GearCalculator.rootRadiusShifted(p.module, p.teeth, p.dedendumCoef, p.profileShift)
         if (rRoot <= 0.0) return LighteningPlan(requestedCount = requestedCount)
 
         // Keep a thin web of material next to the bore and next to the tooth root.
         val web = max(0.6, p.module * 0.4)
-        val boreR = if (p.bore.type == BoreType.NONE) 0.0 else p.bore.diameter / 2.0
+        val boreR = boreOuterRadius(p)
         val rInner = boreR + web
         val rOuter = rRoot - web
         if (rOuter - rInner <= 1.0) {
@@ -150,9 +219,16 @@ object Bore {
      */
     fun spokeWedgeHoles(p: GearParams): List<List<Vec2>> {
         if (p.spokeCount < 3 || p.spokeWidth <= 0.0) return emptyList()
-        val rOuter = GearCalculator.rootRadius(p.module, p.teeth)
-        // Spokes start just outside the bore; a hub boss (when present) widens the web.
-        val boreR = if (p.bore.type == BoreType.NONE) 0.0 else p.bore.diameter / 2.0
+        // The wedge outer boundary must stay strictly inside the tooth root,
+        // otherwise it coincides with the root-gap arcs of the outline (both at
+        // radius rootRadius) and the bridge triangulation becomes non-manifold
+        // (audit L2). Leaving a solid rim ring also gives the spokes a proper
+        // connection to the rim and a printable wall thickness (≥ 1 mm for FDM).
+        val web = max(1.0, p.module * 0.5)
+        val rOuter = GearCalculator.rootRadiusShifted(p.module, p.teeth, p.dedendumCoef, p.profileShift) - web
+        // Spokes start just outside the bore's maximum extent; a hub boss (when
+        // present) widens the web.
+        val boreR = boreOuterRadius(p)
         val hubR = if (HubBuilder.hasHub(p)) p.hubDiameter / 2.0 else 0.0
         val rInner = max(boreR + 1.0, hubR)
         if (rInner >= rOuter) return emptyList()
@@ -173,7 +249,7 @@ object Bore {
     /** Small index/sensor marker on the rim (dot or radial slot). */
     fun indexMarkHoles(p: GearParams): List<List<Vec2>> {
         if (p.indexMarkType == "None") return emptyList()
-        val rOuter = GearCalculator.outerRadius(p.module, p.teeth)
+        val rOuter = GearCalculator.tipRadiusShifted(p.module, p.teeth, p.addendumCoef, p.profileShift)
         val a = Math.toRadians(p.indexMarkAngleDeg)
         val r = 0.6
         return when (p.indexMarkType) {

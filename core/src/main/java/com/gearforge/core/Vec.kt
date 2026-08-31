@@ -10,6 +10,7 @@ data class Vec2(val x: Double, val y: Double) {
     operator fun plus(o: Vec2) = Vec2(x + o.x, y + o.y)
     operator fun minus(o: Vec2) = Vec2(x - o.x, y - o.y)
     operator fun times(s: Double) = Vec2(x * s, y * s)
+    operator fun div(s: Double) = Vec2(x / s, y / s)
     fun dist(o: Vec2) = hypot(x - o.x, y - o.y)
     fun angle() = atan2(y, x)
 
@@ -29,6 +30,10 @@ data class Vec3(val x: Double, val y: Double, val z: Double) {
         z * o.x - x * o.z,
         x * o.y - y * o.x
     )
+
+    fun length() = hypot(hypot(x, y), z)
+
+    fun dist(o: Vec3) = hypot(hypot(x - o.x, y - o.y), z - o.z)
 
     fun normalized(): Vec3 {
         val len = hypot(hypot(x, y), z)

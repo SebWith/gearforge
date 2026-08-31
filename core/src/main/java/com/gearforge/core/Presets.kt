@@ -69,6 +69,14 @@ object Presets {
             "Robots, drivelines", "Robotar, drivlinor",
             GearSpec.defaults(GearType.SPUR).copy(module = 2.0, teeth = 24, material = "PLA")
         ),
+        preset(
+            "spur-14-5", GearType.SPUR,
+            "14.5° classic", "14,5° klassisk",
+            "Module 1 with the classic 14.5° pressure angle (AGMA legacy standard).",
+            "Modul 1 med klassisk 14,5° tryckvinkel (AGMA-arvstandard).",
+            "Classic mechanisms, retrofits", "Klassiska mekanismer, ombyggnad",
+            GearSpec.defaults(GearType.SPUR).copy(module = 1.0, teeth = 20, pressureAngleDeg = 14.5)
+        ),
 
         // ---- Helical gears --------------------------------------------------
         preset(
@@ -158,6 +166,14 @@ object Presets {
             GearSpec.defaults(GearType.PLANETARY).copy(teeth = 16, planetTeeth = 8, ringTeeth = 32, planetCount = 3)
         ),
         preset(
+            "planetary-4", GearType.PLANETARY,
+            "4:1 reduction", "4:1 reduktion",
+            "Sun 12, planets 12, ring 36 — the classic 4:1 planetary stage.",
+            "Sol 12, planeter 12, ring 36 — det klassiska 4:1-planetsteget.",
+            "General reducers", "Allmänna reducerare",
+            GearSpec.defaults(GearType.PLANETARY).copy(teeth = 12, planetTeeth = 12, ringTeeth = 36, planetCount = 3)
+        ),
+        preset(
             "planetary-5", GearType.PLANETARY,
             "5:1 reduction", "5:1 reduktion",
             "Sun 12, planets 18, ring 48 for a 5:1 stage.",
@@ -204,8 +220,8 @@ object Presets {
         preset(
             "ring-planetary", GearType.INTERNAL_RING,
             "Planetary ring", "Planetring",
-            "M1 · 44-tooth ring that matches the standard planetary set.",
-            "M1 · 44-kuggars ring som matchar standardplanetväxeln.",
+            "M1 · 44-tooth internal ring gear — a common fixed-ring size for planetary and strain-wave assemblies.",
+            "M1 · 44-kuggars invändigt ringhjul — en vanlig fast-ringstorlek för planet- och strain-wave-sammansättningar.",
             "Planetary outer ring", "Planetväxelns ytterring",
             GearSpec.defaults(GearType.INTERNAL_RING).copy(module = 1.0, teeth = 44)
         ),
@@ -342,10 +358,10 @@ object Presets {
         preset(
             "screw-2to1", GearType.SCREW_GEAR,
             "2:1 crossed", "2:1 korsad",
-            "30° helix for a crossed 2:1 drive.",
-            "30° helixvinkel för en korsad 2:1-drivning.",
+            "40-tooth gear of a crossed 2:1 pair (mates with a 20-tooth gear at 30° helix).",
+            "40-kuggars hjul i ett korsat 2:1-par (ingriper med ett 20-kuggars hjul vid 30° helixvinkel).",
             "Skew drives", "Skeva drivningar",
-            GearSpec.defaults(GearType.SCREW_GEAR).copy(module = 1.0, teeth = 20, helixAngleDeg = 30.0)
+            GearSpec.defaults(GearType.SCREW_GEAR).copy(module = 1.0, teeth = 40, helixAngleDeg = 30.0)
         ),
         preset(
             "screw-heavy", GearType.SCREW_GEAR,
@@ -385,6 +401,44 @@ object Presets {
             "Conveyors, power drives", "Transportörer, kraftdrivningar",
             GearSpec.defaults(GearType.BELT).copy(
                 beltProfile = "HTD 5M", beltDriverTeeth = 20, beltDrivenTeeth = 40, beltWidthMm = 15.0
+            )
+        ),
+
+        // ---- Compound gear (dubbelkugghjul) --------------------------------
+        preset(
+            "compound-3to1", GearType.COMPOUND,
+            "3:1 reduction", "3:1 reduktion",
+            "M1 compound: 12-tooth stage 1 driving a 36-tooth stage 2 on one shared bore — a 3:1 reduction.",
+            "M1-dubbelkugghjul: 12 kuggar på steg 1 driver 36 kuggar på steg 2 över ett gemensamt axelhål — 3:1 utväxling.",
+            "Compound reducers, transmissions", "Sammansatta reducerare, transmissioner",
+            GearSpec.defaults(GearType.COMPOUND).copy(
+                module = 1.0, teeth = 12, thickness = 8.0,
+                stage2Module = 1.0, stage2Teeth = 36, stage2FaceWidth = 6.0,
+                spacerHeight = 2.0
+            )
+        ),
+        preset(
+            "compound-2to1-fine", GearType.COMPOUND,
+            "2:1 fine", "2:1 fin",
+            "Fine M0.5 compound: 16-tooth stage 1 to 32-tooth stage 2 for a precise 2:1 reduction.",
+            "Fint M0,5-dubbelkugghjul: 16 kuggar på steg 1 till 32 kuggar på steg 2 för en precis 2:1-utväxling.",
+            "Instruments, small mechanisms", "Instrument, små mekanismer",
+            GearSpec.defaults(GearType.COMPOUND).copy(
+                module = 0.5, teeth = 16, thickness = 4.0,
+                stage2Module = 0.5, stage2Teeth = 32, stage2FaceWidth = 3.0,
+                spacerHeight = 1.0
+            )
+        ),
+        preset(
+            "compound-25to1-heavy", GearType.COMPOUND,
+            "2.5:1 heavy / printable", "2,5:1 grov / utskrivbar",
+            "Heavy M2 compound in PLA: 16-tooth stage 1 to 40-tooth stage 2 for a robust 2.5:1 reduction.",
+            "Grovt M2-dubbelkugghjul i PLA: 16 kuggar på steg 1 till 40 kuggar på steg 2 för en robust 2,5:1-utväxling.",
+            "Robots, 3D-printed drivelines", "Robotar, 3D-utskrivna drivlinor",
+            GearSpec.defaults(GearType.COMPOUND).copy(
+                module = 2.0, teeth = 16, thickness = 10.0,
+                stage2Module = 2.0, stage2Teeth = 40, stage2FaceWidth = 8.0,
+                spacerHeight = 3.0, material = "PLA"
             )
         )
     )

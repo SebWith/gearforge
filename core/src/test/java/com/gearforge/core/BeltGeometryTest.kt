@@ -3,6 +3,7 @@ package com.gearforge.core
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.PI
 import kotlin.math.abs
 
 class BeltGeometryTest {
@@ -50,6 +51,55 @@ class BeltGeometryTest {
         band.triangles.forEach { tri ->
             tri.forEach { idx -> assertTrue("index $idx in [0,$n)", idx in 0 until n) }
         }
+    }
+
+    @Test
+    fun beltBandDoesNotPenetratePulleys() {
+        val t = belt().toBeltTransmission()
+        val r = BeltCalculator.resolve(t)
+        val band = BeltBuilder.beltBandMesh(t)
+        val c1 = Vec2(0.0, 0.0)
+        val c2 = Vec2(r.centerDistanceMm, 0.0)
+        val r1 = r.driverPitchDia / 2.0
+        val r2 = r.drivenPitchDia / 2.0
+        // The belt teeth seat in the pulley grooves, whose bottom is at pitch − 0.7·m.
+        val grooveDepth = 0.7 * t.profile.pitchMm / PI
+        for (v in band.vertices) {
+            val p = Vec2(v.x, v.y)
+            assertTrue("band vertex ($p) dips below driver groove", p.dist(c1) >= r1 - grooveDepth - 1e-6)
+            assertTrue("band vertex ($p) dips below driven groove", p.dist(c2) >= r2 - grooveDepth - 1e-6)
+        }
+    }
+
+    @Test
+    fun beltTeethProjectInward() {
+        val t = belt().toBeltTransmission()
+        val r = BeltCalculator.resolve(t)
+        val inner = BeltBuilder.toothedBeltInner(
+            Vec2(0.0, 0.0), r.driverPitchDia / 2.0,
+            Vec2(r.centerDistanceMm, 0.0), r.drivenPitchDia / 2.0,
+            t.profile.pitchMm, 0.6 * t.profile.pitchMm / PI
+        )
+        assertTrue("toothed inner boundary must be non-empty", inner.size > 4)
+        // Some vertices must sit BELOW the pitch line (tooth tips project inward) …
+        val r1 = r.driverPitchDia / 2.0
+        val r2 = r.drivenPitchDia / 2.0
+        val c1 = Vec2(0.0, 0.0)
+        val c2 = Vec2(r.centerDistanceMm, 0.0)
+        var inwardVertices = 0
+        for (p in inner) {
+            val nearDriver = p.dist(c1) < r1 - 1e-6
+            val nearDriven = p.dist(c2) < r2 - 1e-6
+            if (nearDriver || nearDriven) inwardVertices++
+        }
+        assertTrue("belt teeth must project inward below the pitch line", inwardVertices > 0)
+    }
+
+    @Test
+    fun beltBandIsWatertight() {
+        val band = BeltBuilder.beltBandMesh(belt().toBeltTransmission())
+        val v = MeshOps.validate(band)
+        assertTrue("belt band should be watertight, got: ${v.issues}", v.isValid)
     }
 
     @Test
