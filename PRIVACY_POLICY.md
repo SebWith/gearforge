@@ -1,9 +1,9 @@
 # Gear Forge — Privacy Policy
 
-_Last updated: 2026-08-24_
+_Last updated: 2026-08-31_
 
 This privacy policy applies to the Gear Forge Android application ("the app"),
-package `com.gearforge.app`.
+package `com.gearforge.geargenerator`.
 
 ## 1. What we do NOT collect
 

@@ -1,6 +1,6 @@
 # Gear Forge — Store Readiness
 
-> Phase 5 (ACTION_PLAN points 29, 30, 32). Package `com.gearforge.app`.
+> Phase 5 (ACTION_PLAN points 29, 30, 32). Package `com.gearforge.geargenerator`.
 >
 > This document is the single checklist for preparing the Google Play listing and
 > for tracking the future `targetSdk 36` migration. It complements
@@ -11,10 +11,10 @@
 
 | Field | Value |
 |---|---|
-| applicationId | `com.gearforge.app` |
-| versionCode | `2` (bumped from `1` for the first store-ready build) |
+| applicationId | `com.gearforge.geargenerator` |
+| versionCode | `4` (bumped from 3 — Play Console rejected 3 as already used) |
 | versionName | `1.0` |
-| targetSdk | `35` (kept for this release — see upgrade path below) |
+| targetSdk | `36` (required for Play submission from Aug 2026) |
 | minSdk | `24` |
 | Signing | `android/release.keystore`, alias `gearforge`, RSA-2048, 10000 days |
 | Signing config | `android/keystore.properties` (gitignored; optional in [`android/build.gradle`](android/build.gradle)) |
@@ -154,7 +154,7 @@ good baseline.
 
 ## 5. targetSdk 36 upgrade path (ACTION_PLAN point 32)
 
-**Decision:** keep `targetSdk 35` for this release.
+**Status:** completed — `targetSdk 36` is already in effect (see [`android/build.gradle`](android/build.gradle)).
 
 **Deadline:** Google Play requires new apps and updates to target **Android 16
 (API level 36)** from **August 2026** (new apps) — updates to existing apps must

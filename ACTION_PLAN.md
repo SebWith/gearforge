@@ -1,11 +1,11 @@
 # Gear Forge — Åtgärdsplan (32 punkter)
 
-> **Single source of truth** för implementationen av Gear Forge (paket `com.gearforge.app`).
+> **Single source of truth** för implementationen av Gear Forge (paket `com.gearforge.geargenerator`).
 > Denna spec är styrande för allt implementationsarbete. Källförteckningen är
 > [`lanseringsplan-forbattringar.md`](lanseringsplan-forbattringar.md) vars 32 prioriterade punkter
 > (nummer/titel/Åtgärd) återges ordagrant nedan.
 >
-> Teknisk kontext: libGDX + Jetpack Compose, AdMob rewarded + engångsköp Pro, targetSdk 35, minSdk 24.
+> Teknisk kontext: libGDX + Jetpack Compose, AdMob rewarded + engångsköp Pro, targetSdk 36, minSdk 24.
 
 Fasindelning (följ exakt):
 
