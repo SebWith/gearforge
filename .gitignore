@@ -23,3 +23,18 @@ captures/
 
 # --- Kotlin ---
 .kotlin/
+
+# --- Scratch & generated artifacts (do not commit) ---
+/*.txt
+inspect_*.png
+ui*.xml
+spoked-gear-high.stl
+tools/
+store-assets/
+core/Assets/
+Assets/Gemini_Generated_Image_*.jpg
+
+# --- Diagnostic screenshots (do not commit) ---
+diag-screen.png
+gear-screen.png
+now.png
