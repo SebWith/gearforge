@@ -10,6 +10,7 @@ import com.gearforge.core.GearBuilder
 import com.gearforge.core.GearParams
 import com.gearforge.core.IgesWriter
 import com.gearforge.core.Mesh
+import com.gearforge.core.MeshOps
 import com.gearforge.core.PrecisionLevel
 import com.gearforge.core.StepWriter
 import com.gearforge.core.StlWriter
@@ -48,10 +49,10 @@ object ExportManager {
      */
     fun bytes(params: GearParams, format: Format, highQuality: Boolean = true): ByteArray {
         return when (format) {
-            Format.STL -> StlWriter.writeBinary(mesh(params, highQuality))
-            Format.THREE_MF -> ThreeMfWriter.write(mesh(params, highQuality))
-            Format.STEP -> StepWriter.write(mesh(params, highQuality)).toByteArray(Charsets.UTF_8)
-            Format.IGES -> IgesWriter.write(mesh(params, highQuality)).toByteArray(Charsets.UTF_8)
+            Format.STL -> StlWriter.writeBinary(validatedMesh(params, highQuality))
+            Format.THREE_MF -> ThreeMfWriter.write(validatedMesh(params, highQuality))
+            Format.STEP -> StepWriter.write(validatedMesh(params, highQuality)).toByteArray(Charsets.UTF_8)
+            Format.IGES -> IgesWriter.write(validatedMesh(params, highQuality)).toByteArray(Charsets.UTF_8)
             Format.SVG -> {
                 val effective = effective(params, highQuality)
                 SvgWriter.write(GearBuilder.shape(effective)).toByteArray(Charsets.UTF_8)
@@ -66,6 +67,28 @@ object ExportManager {
     /** Builds the merged 3D mesh used for STL/3MF export and the export preview (point 12). */
     fun mesh(params: GearParams, highQuality: Boolean = true): Mesh =
         GearBuilder.merged(effective(params, highQuality))
+
+    /**
+     * Pre-flight mesh-integrity validation for the 3D formats (audit H4). Returns the
+     * list of defects, or an empty list when the mesh is a closed manifold solid that is
+     * safe to export. The app surfaces these before writing a file.
+     */
+    fun validateMesh(params: GearParams, highQuality: Boolean = true): List<String> =
+        MeshOps.validate(mesh(params, highQuality)).issues
+
+    /** Builds and validates the mesh for a 3D export, throwing a descriptive error if broken. */
+    private fun validatedMesh(params: GearParams, highQuality: Boolean): Mesh {
+        val m = mesh(params, highQuality)
+        // Duplicate vertices are expected where the hub boss meets the gear face
+        // (two watertight solids that share a boundary — a printable union, not a
+        // defect). Real blockers are open edges, non-manifold edges, inverted
+        // volume, out-of-range indices and degenerate triangles (audit L4).
+        val issues = MeshOps.validate(m).issues.filterNot { it.contains("duplicate vertices") }
+        if (issues.isNotEmpty()) {
+            throw IllegalStateException("Mesh validation failed: ${issues.joinToString("; ")}")
+        }
+        return m
+    }
 
     /**
      * Runs the full export off the UI thread with coarse progress and coroutine

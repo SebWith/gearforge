@@ -6,9 +6,15 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+
+/** ARGB of the theme accents, shared with the 3D preview cache pre-warmer so the
+ *  cached thumbnails always match the active theme's primary colour. */
+internal val LightPrimaryArgb: Int = Color(0xFF00658C).toArgb()
+internal val DarkPrimaryArgb: Int = Color(0xFF82D1FF).toArgb()
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF00658C),
+    primary = Color(LightPrimaryArgb),
     onPrimary = Color.White,
     primaryContainer = Color(0xFFC2E8FF),
     secondary = Color(0xFF4E616D),
@@ -18,7 +24,7 @@ private val LightColors = lightColorScheme(
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF82D1FF),
+    primary = Color(DarkPrimaryArgb),
     onPrimary = Color(0xFF00344C),
     primaryContainer = Color(0xFF004B68),
     secondary = Color(0xFFB5C9D6),

@@ -59,6 +59,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,6 +93,7 @@ import com.gearforge.core.ToothOverride
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -100,6 +102,9 @@ private data class ExportPreview(val triangles: Int, val w: Double, val h: Doubl
 
 /** Debounce delay before a parameter change triggers a mesh rebuild (point 17). */
 private const val MESH_DEBOUNCE_MS = 200L
+
+/** Maximum number of cached mesh assemblies (bounds memory during long sessions). */
+private const val MAX_MESH_CACHE = 24
 
 /**
  * Collapse/expand state for the parameter sections. Held above the bottom sheet so it
@@ -176,6 +181,11 @@ fun GearWorkspaceScreen(
         // withContext(Dispatchers.Default) is cancellable, so an in-flight build for a
         // stale parameter set is discarded before it is ever published.
         val built = withContext(Dispatchers.Default) { GearBuilder.assembly(params) }
+        // Bound the cache (LinkedHashMap insertion order): evict the oldest entry so a
+        // long editing session cannot retain every previously built mesh (audit H12).
+        if (meshCache.size >= MAX_MESH_CACHE) {
+            meshCache.keys.firstOrNull()?.let { meshCache.remove(it) }
+        }
         meshCache[params] = built
         assembly = built
     }
@@ -317,14 +327,35 @@ fun GearWorkspaceScreen(
                 }
             }
 
-            // 3D viewport takes the full remaining area (Prio 6).
-            AndroidView(
-                factory = remember { { ctx: Context -> GearGLView(ctx) } },
-                modifier = Modifier
+            // 3D viewport takes the full remaining area (Prio 6), with a Blender-style
+            // navigation gizmo overlaid at its top-trailing corner. The gizmo consumes
+            // only taps on its 72x72 area; drags/pinches are forwarded back to the GL
+            // view so orbit/pan/zoom keep working as if the gesture started on the mesh.
+            Box(
+                Modifier
                     .fillMaxWidth()
                     .weight(1f)
-            ) { v ->
-                glViewRef.value = v
+            ) {
+                AndroidView(
+                    factory = remember { { ctx: Context -> GearGLView(ctx) } },
+                    modifier = Modifier.fillMaxSize()
+                ) { v ->
+                    glViewRef.value = v
+                }
+                val glView = glViewRef.value
+                val cameraState by remember(glView) {
+                    glView?.cameraState ?: MutableStateFlow(CameraState())
+                }.collectAsState()
+                ViewportGizmo(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 12.dp, end = 12.dp),
+                    cameraState = cameraState,
+                    onSnapToView = { view -> glViewRef.value?.snapToView(view) },
+                    onOrbit = { dx, dy -> glViewRef.value?.orbitBy(dx, dy) },
+                    onZoom = { factor -> glViewRef.value?.zoomByScale(factor) },
+                    onPan = { dx, dy -> glViewRef.value?.panByPx(dx, dy) }
+                )
             }
         }
 

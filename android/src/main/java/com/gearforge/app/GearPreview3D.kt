@@ -64,6 +64,18 @@ object GearPreviewRenderer {
         return cache.putIfAbsent(key, rendered) ?: rendered
     }
 
+    /** Pre-renders every gear-type thumbnail for both theme accents so the wizard's type
+     *  grid is populated instantly instead of filling in card-by-card. Call off the main
+     *  thread (e.g. from a background dispatcher at app start). */
+    fun warmCache() {
+        val accents = intArrayOf(LightPrimaryArgb, DarkPrimaryArgb)
+        for (accent in accents) {
+            for (type in GearType.entries) {
+                runCatching { preview(type, accent) }
+            }
+        }
+    }
+
     private fun render(params: GearParams, baseArgb: Int): Bitmap? {
         val assembly = runCatching { GearBuilder.assembly(params) }.getOrNull()
             ?: return null

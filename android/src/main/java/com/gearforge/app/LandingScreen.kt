@@ -57,7 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gearforge.core.GearParams
 
-// The hero artwork is always a dark gradient, so the brand and controls use a fixed
+// The hero artwork sits on a dark gradient, so the brand and controls use a fixed
 // light-on-dark palette for consistent contrast regardless of the app theme.
 private val HeroText = Color(0xFFEAF6FF)
 private val HeroAccent = Color(0xFF82D1FF)
@@ -166,8 +166,15 @@ fun LandingScreen(
             )
         }
 
-        // Hero gear: exactly centred on the screen.
-        HeroGear(Modifier.align(Alignment.Center).size(gearSize))
+        // Hero gear artwork, centred on the screen (transparent-background image).
+        Image(
+            painter = painterResource(R.drawable.hero_gear),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(gearSize)
+        )
 
         // Bottom call-to-action block.
         Column(
@@ -269,7 +276,7 @@ fun LandingScreen(
     }
 }
 
-/** Secondary landing action: a light, rounded outlined button tuned for the dark hero. */
+/** Secondary landing action: a rounded outlined button tuned for the light hero. */
 @Composable
 private fun LandingSecondaryButton(
     text: String,

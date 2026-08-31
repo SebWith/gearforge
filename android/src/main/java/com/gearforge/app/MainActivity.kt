@@ -9,8 +9,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gearforge.core.GearParams
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -36,6 +39,10 @@ class MainActivity : ComponentActivity() {
 
         // UMP consent must complete before ads are initialized/loaded.
         ConsentManager(this).ensureConsent { adManager.init() }
+
+        // Pre-warm the software-rendered 3D thumbnail cache on a background thread so the
+        // wizard's gear-type grid renders instantly instead of appearing card-by-card.
+        lifecycleScope.launch(Dispatchers.Default) { GearPreviewRenderer.warmCache() }
 
         setContent {
             // Activity-scoped ViewModel: editor type/params/stage survive rotation + process death.

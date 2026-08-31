@@ -75,6 +75,21 @@ private fun optionLabel(def: ParamDef, option: String, lang: I18n.Lang): String 
     val key = when (def.key) {
         "material" -> "material_" + option.lowercase()
         "lubrication" -> "lubrication_" + option.lowercase().replace(' ', '_')
+        "tooth_profile" -> "profile_" + option.lowercase()
+        "index_mark" -> "mark_" + option.lowercase()
+        "unit" -> when (option) {
+            "mm (module)" -> "unit_mm_module"
+            else -> "unit_inch_diametral_pitch"
+        }
+        "bore_type" -> when (option) {
+            "None" -> "bore_none"
+            "Round" -> "bore_round"
+            "D-cut" -> "bore_dcut"
+            "Keyway" -> "bore_keyway"
+            "Hex" -> "bore_hex"
+            "Square" -> "bore_square"
+            else -> null
+        }
         else -> null
     } ?: return option
     val localized = I18n.t(lang, key)

@@ -26,6 +26,10 @@ object SavedConfigs {
         put("pressureAngle", p.pressureAngleDeg)
         put("thickness", p.thickness)
         put("backlash", p.backlash)
+        put("backlashPercent", p.backlashPercent)
+        put("backlashLeft", p.backlashLeftMm)
+        put("backlashRight", p.backlashRightMm)
+        put("minTopLand", p.minimumTopLandWidth)
         put("profileShift", p.profileShift)
         put("helixAngle", p.helixAngleDeg)
         put("precision", p.precision.name)
@@ -36,6 +40,9 @@ object SavedConfigs {
         put("keyW", p.bore.keywayWidth)
         put("keyD", p.bore.keywayDepth)
         put("hex", p.bore.hexAcrossFlats)
+        put("square", p.bore.squareAcrossFlats)
+        put("keywayStandard", p.bore.keywayStandard)
+        put("dCutSecondFlat", p.bore.dCutSecondFlat)
         put("addendum", p.addendumCoef)
         put("dedendum", p.dedendumCoef)
         put("hubDiameter", p.hubDiameter)
@@ -77,6 +84,7 @@ object SavedConfigs {
         put("tipChamfer", p.tipChamfer)
         put("tipRelief", p.tipRelief)
         put("rootRelief", p.rootRelief)
+        put("elephantFoot", p.elephantFootChamferMm)
         put("lighteningHoleCount", p.lighteningHoleCount)
         put("lighteningHoleDiameter", p.lighteningHoleDiameter)
         put("lighteningHolePCD", p.lighteningHolePCD)
@@ -95,6 +103,14 @@ object SavedConfigs {
         put("beltBacklash", p.beltBacklashMm)
         put("beltFlangeCount", p.beltFlangeCount)
         put("beltIdlerCount", p.beltIdlerCount)
+        put("stage2Teeth", p.stage2Teeth)
+        put("stage2Module", p.stage2Module)
+        put("stage2FaceWidth", p.stage2FaceWidth)
+        put("stage2PressureAngle", p.stage2PressureAngleDeg)
+        put("stage2ProfileShift", p.stage2ProfileShift)
+        put("stage2Phase", p.stage2PhaseDeg)
+        put("spacerHeight", p.spacerHeight)
+        put("spacerDiameter", p.spacerDiameter)
         val overrides = JSONObject()
         p.toothOverrides.forEach { (idx, o) ->
             val jo = JSONObject()
@@ -123,6 +139,10 @@ object SavedConfigs {
             pressureAngleDeg = o.optDouble("pressureAngle", 20.0),
             thickness = o.optDouble("thickness", 6.0),
             backlash = o.optDouble("backlash", 0.1),
+            backlashPercent = o.optDouble("backlashPercent", 0.0),
+            backlashLeftMm = o.optDouble("backlashLeft", 0.0),
+            backlashRightMm = o.optDouble("backlashRight", 0.0),
+            minimumTopLandWidth = o.optDouble("minTopLand", 0.0),
             profileShift = o.optDouble("profileShift", 0.0),
             helixAngleDeg = o.optDouble("helixAngle", 0.0),
             precision = PrecisionLevel.valueOf(o.optString("precision", "STANDARD")),
@@ -133,7 +153,10 @@ object SavedConfigs {
                 dCutFlatOffset = o.optDouble("dCut", 1.0),
                 keywayWidth = o.optDouble("keyW", 2.0),
                 keywayDepth = o.optDouble("keyD", 1.0),
-                hexAcrossFlats = o.optDouble("hex", 6.0)
+                hexAcrossFlats = o.optDouble("hex", 6.0),
+                squareAcrossFlats = o.optDouble("square", 6.0),
+                keywayStandard = o.optBoolean("keywayStandard", false),
+                dCutSecondFlat = o.optBoolean("dCutSecondFlat", false)
             ),
             addendumCoef = o.optDouble("addendum", 1.0),
             dedendumCoef = o.optDouble("dedendum", 1.25),
@@ -175,6 +198,7 @@ object SavedConfigs {
             tipChamfer = o.optDouble("tipChamfer", 0.0),
             tipRelief = o.optDouble("tipRelief", 0.0),
             rootRelief = o.optDouble("rootRelief", 0.0),
+            elephantFootChamferMm = o.optDouble("elephantFoot", 0.0),
             lighteningHoleCount = o.optInt("lighteningHoleCount", 0),
             lighteningHoleDiameter = o.optDouble("lighteningHoleDiameter", 0.0),
             lighteningHolePCD = o.optDouble("lighteningHolePCD", 0.0),
@@ -193,6 +217,14 @@ object SavedConfigs {
             beltBacklashMm = o.optDouble("beltBacklash", 0.0),
             beltFlangeCount = o.optInt("beltFlangeCount", 2),
             beltIdlerCount = o.optInt("beltIdlerCount", 0),
+            stage2Teeth = o.optInt("stage2Teeth", 16),
+            stage2Module = o.optDouble("stage2Module", 0.8),
+            stage2FaceWidth = o.optDouble("stage2FaceWidth", 4.0),
+            stage2PressureAngleDeg = o.optDouble("stage2PressureAngle", 20.0),
+            stage2ProfileShift = o.optDouble("stage2ProfileShift", 0.0),
+            stage2PhaseDeg = o.optDouble("stage2Phase", 0.0),
+            spacerHeight = o.optDouble("spacerHeight", 2.0),
+            spacerDiameter = o.optDouble("spacerDiameter", 0.0),
             toothOverrides = readToothOverrides(o.optJSONObject("toothOverrides"))
         ).coerced() // audit C6: cap deserialized counts/dimensions before geometry
     } catch (e: Exception) {

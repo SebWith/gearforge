@@ -1,5 +1,6 @@
 package com.gearforge.app
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.SurfaceTexture
 import android.opengl.EGL14
@@ -12,6 +13,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.TextureView
+import android.view.animation.PathInterpolator
 import com.gearforge.core.Mesh
 import com.gearforge.core.Vec3
 import java.nio.ByteBuffer
@@ -22,6 +24,9 @@ import kotlin.math.hypot
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * A lit, orbitable OpenGL ES viewport with PBR materials and a soft ground shadow.
@@ -116,12 +121,99 @@ class GearGLView @JvmOverloads constructor(
     fun setOrbit(rotX: Float, rotY: Float) {
         renderer.rotX = rotX
         renderer.rotY = rotY
+        publishCameraState()
         requestRender()
     }
 
     /** Requests a single redraw (used by the hero's idle-spin frame loop). */
     fun requestFrame() {
         requestRender()
+    }
+
+    // ---- Camera state + viewport gizmo (Blender-style navigation) ----------
+
+    /** Live camera snapshot consumed by [ViewportGizmo]; updated on every camera change. */
+    private val _cameraState = MutableStateFlow(CameraState())
+    val cameraState: StateFlow<CameraState> = _cameraState.asStateFlow()
+
+    private var snapAnimator: ValueAnimator? = null
+
+    /** Publishes the current renderer camera as a [CameraState] (no-op when unchanged). */
+    private fun publishCameraState() {
+        val next = renderer.snapshotCameraState()
+        val prev = _cameraState.value
+        if (prev == next) return
+        _cameraState.value = next
+    }
+
+    /** Forwards a single-finger gizmo drag to the orbit camera (same scale as the GL touch handler). */
+    fun orbitBy(dxPx: Float, dyPx: Float) {
+        snapAnimator?.cancel()
+        renderer.rotY += dxPx * 0.5f
+        renderer.rotX += dyPx * 0.5f
+        publishCameraState()
+        requestRender()
+    }
+
+    /** Forwards a gizmo pinch to the zoom (inverse scale, same as the GL scale detector). */
+    fun zoomByScale(scaleFactor: Float) {
+        if (scaleFactor <= 0f) return
+        snapAnimator?.cancel()
+        renderer.zoom = (renderer.zoom / scaleFactor).coerceIn(0.1f, 20f)
+        publishCameraState()
+        requestRender()
+    }
+
+    /** Forwards a two-finger gizmo pan to the scene translation. */
+    fun panByPx(dxPx: Float, dyPx: Float) {
+        snapAnimator?.cancel()
+        renderer.panBy(dxPx, dyPx)
+        publishCameraState()
+        requestRender()
+    }
+
+    /**
+     * Smoothly animates the orbit to the axis-aligned view [view] (or the isometric
+     * [GizmoView.HOME]), keeping the current target/pivot, zoom and pan. The rotation
+     * takes the shortest path and eases with Material FastOutSlowIn. A new snap or any
+     * manual orbit/zoom/pan cancels an in-flight transition.
+     */
+    fun snapToView(view: GizmoView, durationMs: Int = 250) {
+        val (targetX, targetY) = view.targetOrbit()
+        val startX = renderer.rotX
+        val startY = renderer.rotY
+        val deltaX = shortestAngleDelta(startX, targetX)
+        val deltaY = shortestAngleDelta(startY, targetY)
+        if (deltaX == 0f && deltaY == 0f) return
+        snapAnimator?.cancel()
+        snapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = durationMs.toLong()
+            interpolator = PathInterpolator(0.4f, 0f, 0.2f, 1f) // FastOutSlowInEasing
+            addUpdateListener { a ->
+                val t = a.animatedValue as Float
+                renderer.rotX = startX + deltaX * t
+                renderer.rotY = startY + deltaY * t
+                publishCameraState()
+                requestRender()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    if (snapAnimator === animation) snapAnimator = null
+                }
+
+                override fun onAnimationCancel(animation: android.animation.Animator) {
+                    if (snapAnimator === animation) snapAnimator = null
+                }
+            })
+        }.also { it.start() }
+    }
+
+    /** Shortest signed angle delta from [from] to [to], normalised to (−180°, 180°]. */
+    private fun shortestAngleDelta(from: Float, to: Float): Float {
+        var d = (to - from) % 360f
+        if (d > 180f) d -= 360f
+        if (d < -180f) d += 360f
+        return d
     }
 
     init {
@@ -145,6 +237,8 @@ class GearGLView @JvmOverloads constructor(
         currentSurface = surface
         currentWidth = width
         currentHeight = height
+        renderer.setViewportSize(width, height)
+        publishCameraState()
         startRenderThread()
     }
 
@@ -152,6 +246,8 @@ class GearGLView @JvmOverloads constructor(
         currentWidth = width
         currentHeight = height
         renderThread?.requestSurfaceChanged(width, height)
+        renderer.setViewportSize(width, height)
+        publishCameraState()
     }
 
     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
@@ -349,7 +445,9 @@ class GearGLView @JvmOverloads constructor(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
+                snapAnimator?.cancel()
                 renderer.zoom = (renderer.zoom / detector.scaleFactor).coerceIn(0.1f, 20f)
+                publishCameraState()
                 requestRender()
                 return true
             }
@@ -368,6 +466,7 @@ class GearGLView @JvmOverloads constructor(
                 lastY = event.y
             }
             MotionEvent.ACTION_MOVE -> {
+                snapAnimator?.cancel()
                 if (event.pointerCount >= 2) {
                     renderer.panBy(event.x - lastX, event.y - lastY)
                     requestRender()
@@ -376,6 +475,7 @@ class GearGLView @JvmOverloads constructor(
                     renderer.rotX += (event.y - lastY) * 0.5f
                     requestRender()
                 }
+                publishCameraState()
                 lastX = event.x
                 lastY = event.y
             }
@@ -424,6 +524,7 @@ class GearGLView @JvmOverloads constructor(
         renderer.centerZ = centerZ.toFloat()
         renderer.shadowRadius = radius.toFloat() * 1.15f
         renderer.floorZ = (minZ - radius * 0.25).toFloat()
+        publishCameraState()
         requestRender()
     }
 
@@ -628,9 +729,11 @@ class GearGLView @JvmOverloads constructor(
                 GLES20.glClearColor(0f, 0f, 0f, 0f)
             }
             GLES20.glEnable(GLES20.GL_DEPTH_TEST)
-            GLES20.glEnable(GLES20.GL_CULL_FACE)
-            GLES20.glCullFace(GLES20.GL_BACK)
-            GLES20.glFrontFace(GLES20.GL_CCW)
+            // Two-sided rendering (audit R1): mixed-winding meshes from arbitrary
+            // CAD sources would render half-black under back-face culling. Culling is
+            // disabled and the fragment shader flips the normal for back-facing
+            // fragments, so both sides are lit consistently.
+            GLES20.glDisable(GLES20.GL_CULL_FACE)
             simpleProgram = createProgram(SIMPLE_VS, SIMPLE_FS)
             pbrProgram = createProgram(SIMPLE_VS, PBR_FS)
             shadowProgram = createProgram(SHADOW_VS, SHADOW_FS)
@@ -686,12 +789,54 @@ class GearGLView @JvmOverloads constructor(
         private var viewW = 1
         private var viewH = 1
 
+        /** Sets the viewport size for camera snapshots without touching the GL state. */
+        fun setViewportSize(width: Int, height: Int) {
+            viewW = width
+            viewH = height
+        }
+
         fun onSurfaceChanged(width: Int, height: Int) {
             viewW = width
             viewH = height
             GLES20.glViewport(0, 0, width, height)
             diag = diag.copy(surfaceWidth = width, surfaceHeight = height)
             if (BuildConfig.DEBUG) android.util.Log.d("GearGLView", "surfaceChanged " + width + "x" + height)
+        }
+
+        /**
+         * Builds a [CameraState] from the current camera fields using the same view and
+         * projection math as [onDrawFrame] (fovY = 35°, aspect from the viewport). The
+         * rotation quaternion is the equivalent camera orientation `R⁻¹` of the orbit.
+         */
+        fun snapshotCameraState(): CameraState {
+            val aspect = if (viewH > 0) viewW.toFloat() / viewH else 1f
+            val fovy = 35f
+            val halfFovY = Math.toRadians((fovy / 2f).toDouble())
+            val halfFovX = Math.atan(Math.tan(halfFovY) * aspect)
+            val minHalf = minOf(halfFovY, halfFovX)
+            val radius = if (frameRadius > 0f) frameRadius else 20f
+            val eyeDist = (radius / Math.sin(minHalf)).toFloat() * zoom
+            val near = maxOf(0.01f, eyeDist - radius * 4f)
+            val far = eyeDist + radius * 8f
+            val proj = perspective(fovy, aspect, near, far)
+            val eye = floatArrayOf(0f, 0f, eyeDist)
+            val target = floatArrayOf(0f, 0f, centerZ)
+            val view = lookAt(eye, target, floatArrayOf(0f, 1f, 0f))
+            return CameraState(
+                rotXDeg = rotX,
+                rotYDeg = rotY,
+                zoom = zoom,
+                panX = panX,
+                panY = panY,
+                eye = eye,
+                target = target,
+                rotationQuaternion = gizmoQuaternion(rotX, rotY),
+                viewMatrix = view,
+                projectionMatrix = proj,
+                viewportWidth = viewW,
+                viewportHeight = viewH,
+                frameRadius = radius
+            )
         }
 
         fun onDrawFrame() {
@@ -1016,6 +1161,7 @@ class GearGLView @JvmOverloads constructor(
                 varying vec3 vNormal;
                 void main() {
                     vec3 n = normalize(vNormal);
+                    if (!gl_FrontFacing) n = -n;
                     vec3 l = normalize(uLightDir);
                     float diff = max(dot(n, l), 0.0);
                     vec3 color = uColor * (0.35 + diff * 0.8);
@@ -1054,6 +1200,7 @@ class GearGLView @JvmOverloads constructor(
                 }
                 void main() {
                     vec3 N = normalize(vNormal);
+                    if (!gl_FrontFacing) N = -N;
                     vec3 V = normalize(uCamPos - vWorldPos);
                     vec3 L = normalize(uLightDir);
                     vec3 H = normalize(V + L);

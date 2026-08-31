@@ -378,7 +378,11 @@ private fun CustomParamsPage(
             OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) {
                 Text(I18n.t(lang, "back"))
             }
-            Button(onClick = { onDone(params) }, modifier = Modifier.weight(1f)) {
+            // Primary CTA: carry the current parameter set into the real 3D view
+            // (the editor), preserving every parameter without resetting settings.
+            Button(onClick = { onDone(params) }, modifier = Modifier.weight(1.6f)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
                 Text(I18n.t(lang, "continue_to_3d"))
             }
         }
