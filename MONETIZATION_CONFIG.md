@@ -9,10 +9,14 @@ The project keeps **Google's official TEST IDs as dev/CI fallbacks**, with the
 **real production IDs supplied at release time** via Gradle properties (enforced
 by the release guard in `android/build.gradle`).
 
+> ⚠️ **Production AdMob IDs are secrets and must never be committed.** This file
+> contains placeholders only. If production IDs were ever pushed to a public repo,
+> rotate them in the Google AdMob console and purge them from git history.
+
 | ID | Production value | Purpose |
 |---|---|---|
-| App ID | `ca-app-pub-6154121627229543~9677913532` | Mobile Ads SDK initialization |
-| Rewarded unit | `ca-app-pub-6154121627229543/4517387519` | Rewarded video shown for the export gate |
+| App ID | `ca-app-pub-XXXXXXXXXXXXX~YYYYYY` | Mobile Ads SDK initialization |
+| Rewarded unit | `ca-app-pub-XXXXXXXXXXXXX/YYYYYY` | Rewarded video shown for the export gate |
 
 ### Where each ID lives
 
@@ -37,8 +41,8 @@ To build a release with real IDs:
 
 ```bash
 .\gradlew.bat :android:assembleRelease ^
-    -PadmobAppId=ca-app-pub-6154121627229543~9677913532 ^
-    -PadmobRewardedUnitId=ca-app-pub-6154121627229543/4517387519
+    -PadmobAppId=ca-app-pub-XXXXXXXXXXXXX~YYYYYY ^
+    -PadmobRewardedUnitId=ca-app-pub-XXXXXXXXXXXXX/YYYYYY
 ```
 
 Alternatively, replace the two `?:` fallbacks at the top of

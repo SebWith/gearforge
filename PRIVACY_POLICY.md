@@ -54,6 +54,8 @@ from children.
 We may update this policy from time to time. Significant changes will be reflected
 in-app.
 
+For privacy-related questions, contact us at: <gearforge.app@gmail.com>.
+
 ---
 
 ## Svensk sammanfattning (Swedish summary)

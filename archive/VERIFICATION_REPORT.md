@@ -156,7 +156,7 @@ All Gradle commands used the cached distribution (Gradle is not on PATH and ther
 is no wrapper):
 
 ```
-C:\Users\sebbe\.gradle\wrapper\dists\gradle-8.9-bin\90cnw93cvbtalezasaz0blq0a\gradle-8.9\bin\gradle.bat
+<gradle-cache>\gradle-8.9\bin\gradle.bat
 ```
 
 ### 4.1 Cleanup
@@ -176,7 +176,7 @@ gradle.bat :core:test --console=plain
 ```
 Result: **FAILED** — `:core:compileTestKotlin` succeeded, but the forked test worker
 threw `java.lang.ClassNotFoundException: com.gearforge.core.GearCoreTest`. This is the
-pre-existing non-ASCII workspace-path environment issue (`överför skrivbord`).
+pre-existing non-ASCII workspace-path environment issue.
 
 **Fallback (direct JUnitCore):**
 Test classes were compiled by the run above (`core/build/classes/kotlin/test`). Ran:
@@ -213,7 +213,7 @@ Result: **BUILD SUCCESSFUL** (2s; 52 up-to-date, 1 executed — `lintVitalReleas
 ### 4.5 APK signature verification
 
 ```
-C:\Users\sebbe\android-dev\android-sdk\build-tools\35.0.0\apksigner.bat \
+<android-sdk>\build-tools\35.0.0\apksigner.bat \
     verify --print-certs android\build\outputs\apk\release\android-release.apk
 ```
 Result:
@@ -291,7 +291,7 @@ the build.
    and the Play Console Data Safety form completed to match.
 5. **(e) `gradle :core:test` environment issue on non-ASCII path.** The Gradle test
    task fails in the forked worker with `ClassNotFoundException` due to the
-   `överför skrivbord` path; the suite passes via direct `JUnitCore`.
+   non-ASCII workspace path; the suite passes via direct `JUnitCore`.
 6. **(f) Release keystore is local and gitignored.** `android/release.keystore` must
    be backed up securely (and its credentials retained) for Play App Signing.
 

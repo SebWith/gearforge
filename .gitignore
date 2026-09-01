@@ -21,6 +21,9 @@ captures/
 .externalNativeBuild/
 .cxx/
 
+# --- VS Code (settings contain machine-specific absolute paths) ---
+.vscode/
+
 # --- Kotlin ---
 .kotlin/
 
@@ -33,6 +36,7 @@ tools/
 store-assets/
 core/Assets/
 Assets/Gemini_Generated_Image_*.jpg
+Assets/ChatGPT Image*.png
 
 # --- Diagnostic screenshots (do not commit) ---
 diag-screen.png
