@@ -7,6 +7,7 @@ import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
+import com.android.billingclient.api.PendingPurchasesParams
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
@@ -46,7 +47,11 @@ class BillingManager(private val activity: Activity, private val settings: Setti
     init {
         billingClient = BillingClient.newBuilder(activity)
             .setListener(purchasesUpdated)
-            .enablePendingPurchases()
+            .enablePendingPurchases(
+                PendingPurchasesParams.newBuilder()
+                    .enableOneTimeProducts()
+                    .build()
+            )
             .build()
         connect()
     }
@@ -141,7 +146,8 @@ class BillingManager(private val activity: Activity, private val settings: Setti
         )
         billingClient?.queryProductDetailsAsync(
             QueryProductDetailsParams.newBuilder().setProductList(productList).build()
-        ) { result, details ->
+        ) { result, productDetailsResult ->
+            val details = productDetailsResult.productDetailsList
             if (result.responseCode == BillingClient.BillingResponseCode.OK && details.isNotEmpty()) {
                 val flow = BillingFlowParams.newBuilder()
                     .setProductDetailsParamsList(

@@ -12,7 +12,7 @@
 | Field | Value |
 |---|---|
 | applicationId | `com.gearforge.geargenerator` |
-| versionCode | `4` (bumped from 3 — Play Console rejected 3 as already used) |
+| versionCode | `5` (bumped from 4 — new launcher icon) |
 | versionName | `1.0` |
 | targetSdk | `36` (required for Play submission from Aug 2026) |
 | minSdk | `24` |

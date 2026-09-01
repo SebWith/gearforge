@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.0] - 2026-08-31
 
-First public production release (`versionName 1.0`, `versionCode 4`, `targetSdk 36`).
+First public production release (`versionName 1.0`, `versionCode 5`, `targetSdk 36`).
 
 ### Added
 
