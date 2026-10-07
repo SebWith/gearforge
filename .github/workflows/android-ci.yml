@@ -1,0 +1,228 @@
+name: Android CI
+
+# Repot hade ingen CI alls: inget körde :core:test eller lint automatiskt, trots att
+# testsviten är huvudsakliga skyddet mot geometriregressioner (17 filer i core).
+#
+# Den här workflowen kör det som inte kräver emulator eller hemligheter:
+#   1. :core:test           — geometri, round-trip och filformat
+#   2. :android:assembleDebug — att release-koden kompilerar
+#   3. :android:lint        — Android-lint (PropertyEscape är avstängt i build.gradle)
+#   4. i18n_audit.py        — EN/SV-paritet i I18n.kt
+#   5. verify_export.py     — strukturkontroll av skrivarnas utdata
+#
+# Signerade release-byggen kräver keystore.properties och riktiga AdMob-ID och körs
+# därför INTE här (se .github/skills/android-release-guard/SKILL.md).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    name: Kärntester
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a
+
+      - name: Sätt upp JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Sätt upp Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+
+      - name: Set up Python for fixture validation
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Gör gradlew körbar
+        run: chmod +x gradlew
+
+      - name: Kör kärntestsviten
+        run: ./gradlew :core:test --rerun --warning-mode all --console=plain
+
+      - name: Validate six writer-generated exports and malformed-file regressions
+        run: |
+          python -m unittest discover -s tools -p test_verify_export.py -v
+          python tools/verify_export.py 'core/build/export-fixtures/*' --expect-diameter 22 --expect-triangles 5632
+
+      - name: Publicera testrapport
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: core-test-report
+          path: |
+            core/build/reports/tests/test/
+            core/build/test-results/test/
+            core/build/export-fixtures/
+          if-no-files-found: warn
+
+  android-build:
+    name: Android-bygge och lint
+    runs-on: ubuntu-latest
+    needs: core-tests
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Sätt upp JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Sätt upp Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+
+      - name: Sätt upp Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+
+      - name: Gör gradlew körbar
+        run: chmod +x gradlew
+
+      - name: Bygg debug-APK
+        run: ./gradlew :android:assembleDebug --warning-mode all --console=plain
+
+      - name: Android JVM regression tests
+        run: ./gradlew :android:testDebugUnitTest --warning-mode all --console=plain
+
+      - name: Kör Android lint
+        run: ./gradlew :android:lint --warning-mode all --console=plain
+
+      - name: Publicera lintrapport
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-lint-report
+          path: |
+            android/build/reports/lint-results-*.html
+            android/build/reports/tests/testDebugUnitTest/
+            android/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+
+  dependency-security:
+    name: Resolved dependency vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Resolve actual application, JVM test and buildscript dependencies
+        run: |
+          chmod +x gradlew
+          ./gradlew -I tools/dependency-inventory.gradle dependencyInventory --warning-mode all --console=plain
+
+      - name: Test fail-closed scan reporting
+        run: python -m unittest discover -s tools -p test_scan_dependencies.py -v
+
+      - name: Scan with checksum-pinned official OSV Scanner
+        run: python tools/scan_dependencies.py
+
+      - name: Preserve inventory and vulnerability evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dependency-security-report
+          path: |
+            build/reports/dependencies/
+            build/reports/security/
+          if-no-files-found: error
+
+  string-and-format-checks:
+    name: I18n och exportformat
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Sätt upp Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Körbarhetskontroll av verktygsskripten
+        run: |
+          python -m py_compile tools/i18n_audit.py
+          python -m py_compile tools/verify_export.py
+          python -m py_compile tools/validate_customizations.py
+
+      - name: Validera agentanpassningarna
+        run: |
+          python -m pip install --quiet pyyaml
+          python tools/validate_customizations.py
+          python -m unittest discover -s tools -p test_ci_config.py -v
+
+      - name: EN/SV-paritet i I18n.kt
+        run: python tools/i18n_audit.py
+
+      - name: Tillgänglighetsregler i Compose-källan
+        run: |
+          python -m unittest discover -s tools -p test_a11y_audit.py -v
+          python tools/a11y_audit.py --source android/src/main/java
+
+      - name: Kugghjulstyper och exportformat
+        run: |
+          echo "Verifierar att de siffror dokumentationen anger finns i koden."
+          python - <<'PY'
+          import re, pathlib, sys
+
+          root = pathlib.Path('.')
+
+          model = (root / 'core/src/main/java/com/gearforge/core/GearModel.kt').read_text(encoding='utf-8')
+          types = re.search(r'enum class GearType\s*\{(.*?)\}', model, re.S)
+          if not types:
+              sys.exit('Kunde inte lasa GearType ur GearModel.kt')
+          gear_types = [t for t in re.findall(r'[A-Z][A-Z0-9_]*', types.group(1))]
+
+          export = (root / 'android/src/main/java/com/gearforge/app/ExportManager.kt').read_text(encoding='utf-8')
+          fmt = re.search(r'enum class Format\(.*?\)\s*\{(.*?)\n    \}', export, re.S)
+          if not fmt:
+              sys.exit('Kunde inte lasa Format ur ExportManager.kt')
+          formats = [t for t in re.findall(r'^\s*([A-Z][A-Z0-9_]*)\("', fmt.group(1), re.M)]
+
+          print(f'GearType: {len(gear_types)} -> {", ".join(gear_types)}')
+          print(f'Exportformat: {len(formats)} -> {", ".join(formats)}')
+
+          errors = []
+          if len(gear_types) != 14:
+              errors.append(f'GearType har {len(gear_types)} varden, STORE_READINESS.md sager 14')
+          if len(formats) != 6:
+              errors.append(f'ExportManager.Format har {len(formats)} varden, STORE_READINESS.md sager 6')
+
+          doc = (root / 'STORE_READINESS.md').read_text(encoding='utf-8')
+          for claim in ('14 gear types', 'Six export formats'):
+              if claim not in doc:
+                  errors.append(f'STORE_READINESS.md saknar pastaendet "{claim}"')
+
+          for e in errors:
+              print(f'FEL: {e}')
+          sys.exit(1 if errors else 0)
+          PY
