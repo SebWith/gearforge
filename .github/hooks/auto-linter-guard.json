@@ -3,8 +3,8 @@
     "PostToolUse": [
       {
         "type": "command",
-        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .github/hooks/scripts/auto-linter-guard.ps1",
-        "timeout": 120
+        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .github/hooks/scripts/gearforge-guard.ps1",
+        "timeout": 300
       }
     ]
   }
