@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply plugin: 'org.jetbrains.kotlin.plugin.compose'
@@ -31,7 +33,7 @@ if (hasReleaseSigning) {
 }
 
 android {
-    namespace 'com.gearforge.app'
+    namespace = 'com.gearforge.app'
     compileSdk 36
 
     defaultConfig {
@@ -42,10 +44,19 @@ android {
         minSdk 24
         // targetSdk 36 is required for Play submission from Aug 2026.
         targetSdk 36
-        // versionCode bumped to 5: new launcher icon (4 already uploaded).
-        // versionName stays "1.0" as this is the first public production release.
-        versionCode 5
-        versionName "1.0"
+        // versionCode 10: same 1.1 content as the frozen 9 build — 9 was already consumed
+        // (Play Console rejected the upload on 2026-10-03 with "Versionskoden 9 har redan
+        // använts"), and Play never accepts a reused versionCode, so this release takes the
+        // next number. v8 fixed the missing runtime WRITE_EXTERNAL_STORAGE request (on
+        // API 24..28 the export writes straight to public external storage; with no runtime
+        // grant every export failed with a SecurityException that the Result-based error
+        // handling turned into a generic "export failed"), and v7 added the In-App Review
+        // card. 5/6/7/8/9 are all in use.
+        // versionName 1.1: the first release that changes what a user measures and sees — the
+        // HUD's anchors and diameters, the playback base rate and the viewport's layout —
+        // rather than repairing one code path behind an unchanged screen.
+        versionCode 10
+        versionName "1.1"
 
         // Injects the AdMob App ID into AndroidManifest.xml meta-data.
         manifestPlaceholders = [admobAppId: admobAppId]
@@ -53,6 +64,10 @@ android {
         // Exposes the IDs to Kotlin (BuildConfig.ADMOB_APP_ID / ADMOB_REWARDED_UNIT_ID).
         buildConfigField 'String', 'ADMOB_APP_ID', "\"$admobAppId\""
         buildConfigField 'String', 'ADMOB_REWARDED_UNIT_ID', "\"$admobRewardedUnitId\""
+
+        // Instrumented device tests (MediaStore recovery path). Test-only: this attribute
+        // lands in the test APK's manifest, not the app's.
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -70,13 +85,24 @@ android {
         release {
             // Point 19: enable R8 code shrinking + resource shrinking for release.
             minifyEnabled true
-            shrinkResources true
+            shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
 
             // Point 30: sign the release APK when keystore.properties is present.
             if (hasReleaseSigning) {
-                signingConfig signingConfigs.release
+                signingConfig = signingConfigs.release
             }
+        }
+        // Measurement-only twin of release: same R8/resource shrinking and non-debuggable runtime,
+        // but debug-signed, shell-profileable (src/benchmark/AndroidManifest.xml) and installed
+        // side by side. Never uploaded; it keeps the default test AdMob IDs, and the release ID
+        // guard below only watches assembleRelease/bundleRelease.
+        benchmark {
+            initWith release
+            signingConfig = signingConfigs.debug
+            matchingFallbacks = ['release']
+            applicationIdSuffix = '.benchmark'
+            debuggable = false
         }
     }
 
@@ -92,13 +118,9 @@ android {
         disable 'PropertyEscape'
     }
 
-    kotlinOptions {
-        jvmTarget = '17'
-    }
-
     buildFeatures {
-        compose true
-        buildConfig true
+        compose = true
+        buildConfig = true
     }
 
     sourceSets {
@@ -121,7 +143,18 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
+}
+
 dependencies {
+    constraints {
+        implementation('com.google.guava:guava:32.0.1-android') {
+            because 'Fix CVE-2020-8908 and CVE-2023-2976; retain the Android variant and Windows temp-file compatibility'
+        }
+    }
     implementation project(':core')
     implementation 'androidx.core:core-ktx:1.15.0'
     implementation platform('androidx.compose:compose-bom:2024.12.01')
@@ -135,6 +168,14 @@ dependencies {
     implementation 'com.google.android.gms:play-services-ads:23.5.0'
     implementation 'com.google.android.ump:user-messaging-platform:2.2.0'
     implementation 'com.android.billingclient:billing:9.1.0'
+    // Play In-App Review (tester report opportunity 4): native rating card.
+    implementation 'com.google.android.play:review-ktx:2.0.2'
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testImplementation 'org.json:json:20240303'
+    // On-device verification of the MediaStore recovery branch (JVM tests configure
+    // final Context, packageManager and ContentResolver APIs).
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
 }
