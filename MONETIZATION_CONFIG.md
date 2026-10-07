@@ -1,4 +1,4 @@
-# Gear Forge — Monetization & AdMob Configuration
+# GearForge — Monetization & AdMob Configuration
 
 Single source of truth for the monetization integration implemented in Phase 1
 (ACTION_PLAN points 22, 23, 24, 25, 26, 27, 28, 31).
@@ -9,14 +9,15 @@ The project keeps **Google's official TEST IDs as dev/CI fallbacks**, with the
 **real production IDs supplied at release time** via Gradle properties (enforced
 by the release guard in `android/build.gradle`).
 
-> ⚠️ **Production AdMob IDs are secrets and must never be committed.** This file
-> contains placeholders only. If production IDs were ever pushed to a public repo,
-> rotate them in the Google AdMob console and purge them from git history.
+> The AdMob **App ID and ad unit ID are not secrets** — both are embedded in every
+> published APK and visible from the store listing. The secret in this project is
+> `android/keystore.properties`, which is gitignored. Recording the production IDs
+> here is safe and makes the release command copy-pasteable.
 
 | ID | Production value | Purpose |
 |---|---|---|
-| App ID | `ca-app-pub-XXXXXXXXXXXXX~YYYYYY` | Mobile Ads SDK initialization |
-| Rewarded unit | `ca-app-pub-XXXXXXXXXXXXX/YYYYYY` | Rewarded video shown for the export gate |
+| App ID | `ca-app-pub-6154121627229543~9677913532` | Mobile Ads SDK initialization |
+| Rewarded unit | `ca-app-pub-6154121627229543/4517387519` | Rewarded video shown for the export gate |
 
 ### Where each ID lives
 
@@ -37,28 +38,70 @@ the top of [`android/build.gradle`](android/build.gradle):
 - `admobAppId` → App ID (fallback `ca-app-pub-3940256099942544~3347511713`)
 - `admobRewardedUnitId` → Rewarded unit (fallback `ca-app-pub-3940256099942544/5224354917`)
 
-To build a release with real IDs:
+To build a release with real IDs, use the wrapper script. Set `$expectedVersionCode`
+and `$expectedVersionName` from the intended version in `android/build.gradle`.
+Confirm the full `$trustedUploadCertSha256` from an independent trusted source such
+as Play Console, not from the bundle being checked. JDK 17+, `py`, and hash-pinned
+bundletool 1.18.2 are required; see the
+[release guard](.github/skills/android-release-guard/SKILL.md).
 
-```bash
-.\gradlew.bat :android:assembleRelease ^
-    -PadmobAppId=ca-app-pub-XXXXXXXXXXXXX~YYYYYY ^
-    -PadmobRewardedUnitId=ca-app-pub-XXXXXXXXXXXXX/YYYYYY
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build-release-aab.ps1 `
+    -AdmobAppId 'ca-app-pub-6154121627229543~9677913532' `
+  -AdmobRewardedUnitId 'ca-app-pub-6154121627229543/4517387519' `
+  -ExpectedVersionCode $expectedVersionCode -ExpectedVersionName $expectedVersionName `
+  -ExpectedCertificateSha256 $trustedUploadCertSha256
 ```
 
-Alternatively, replace the two `?:` fallbacks at the top of
-[`android/build.gradle`](android/build.gradle:9) with the real IDs. **These two
-places are the only locations that must change** — the manifest and `AdManager`
-already read from the single source of truth.
+The wrapper checks exact IDs, package/version, signature coverage, and the trusted
+certificate, then emits a hash-bound JSON receipt. Require `Verified AAB` and the
+receipt printed by this run. A file left from an older build is not proof.
+
+The underlying Gradle build command (not an equivalent verification gate):
+
+```text
+.\gradlew.bat :android:bundleRelease ^
+    -PadmobAppId=ca-app-pub-6154121627229543~9677913532 ^
+    -PadmobRewardedUnitId=ca-app-pub-6154121627229543/4517387519
+```
+
+Keep debug/CI test-ID fallbacks unchanged. The manifest and `AdManager` already
+read from these properties; production values belong in the release invocation.
 
 > ⚠️ Never use test IDs for a production release. With the properties unset, the
 > app compiles against Google's test IDs by design so CI/debug builds work without
 > secrets.
 
+### app-ads.txt — hostname verification (added 2026-10-07)
+
+AdMob proves that the publisher ID owns the app with a file at the **root of the
+developer-website hostname**, never in a subdirectory. AdMob derives the hostname
+from the developer website in the Play listing; for GearForge that is
+`sebwith.github.io`, so the crawler probes `https://sebwith.github.io/app-ads.txt`
+and `http://sebwith.github.io/app-ads.txt`.
+
+| What | Where |
+|---|---|
+| File | `app-ads.txt` in the root of the separate `SebWith/sebwith.github.io` Pages repo (`main`, `/`) |
+| Live URL | <https://sebwith.github.io/app-ads.txt> — HTTP 200, `text/plain` (verified 2026-10-07) |
+| Content | `google.com, pub-6154121627229543, DIRECT, f08c47fec0942fa0` |
+| Developer site | <https://sebwith.github.io/> — landing page in the same repo |
+
+The publisher ID above must match the App ID (`pub-6154121627229543`); the file
+holds no secret, only the same public ID that ships in every APK.
+
+Note the two Pages sites are separate and coexist: the `gearforge` repo publishes
+to `sebwith.github.io/gearforge/` (source `main` / `docs`) and hosts the privacy
+policy Play links to, while only a repo named exactly `sebwith.github.io` can serve
+the hostname root. Editing one does not affect the other. After the file changes,
+allow up to 24 hours, or request a crawl from AdMob → Apps → app-ads.txt →
+*Search for updates*.
+
 ## 2. Monetization strategy (ACTION_PLAN point 26)
 
 **Decision: rewarded-only for launch.**
 
-Gear Forge is a design tool where users are actively focused on modelling gears.
+GearForge is a design tool where users are actively focused on modelling gears.
 Interruptive formats (banners, interstitials) would break the flow mid-design and
 increase churn for marginal revenue. Instead:
 
@@ -98,13 +141,39 @@ before [`AdManager.init`](android/src/main/java/com/gearforge/app/AdManager.kt) 
 [`MainActivity.onCreate`](android/src/main/java/com/gearforge/app/MainActivity.kt:28):
 
 1. `ConsentInformation.requestConsentInfoUpdate` is requested.
-2. If a consent form is available, `UserMessagingPlatform.loadConsentForm` loads it.
-3. If consent status is `REQUIRED`, the form is shown; ad initialization/loading
-   proceeds only after dismissal.
+2. `UserMessagingPlatform.loadAndShowConsentFormIfRequired` loads and shows the form only when
+   consent must be collected (`REQUIRED`); ad initialization/loading proceeds only after it
+   completes. With consent already given it completes at once, without building a form WebView.
+3. Ads are initialized and loaded only while `canRequestAds()` is true. `MobileAds.initialize`
+   runs once per process on a background thread, and the preloaded rewarded ad is process-wide
+   (`RewardedAdSource` in `AdManager.kt`), so recreating the activity (font scale, locale) neither
+   re-initializes the SDK nor drops or replaces a loaded ad; an ad older than one hour is replaced
+   (Google: "ads expire after an hour"). The manifest enables `com.google.android.gms.ads.flag.OPTIMIZE_AD_LOADING`,
+   which SDK 23.x leaves off; without it `RewardedAd.load` does its work on the main thread.
 4. Every step is guarded so a missing/erroring UMP SDK never blocks the app.
 
-The UMP SDK is added via `com.google.android.ump:user-messaging-platform:2.2.0` in
-[`android/build.gradle`](android/build.gradle).
+The UMP SDK is declared as `com.google.android.ump:user-messaging-platform:2.2.0` in
+[`android/build.gradle`](android/build.gradle); `play-services-ads:23.5.0` resolves it to 3.0.0.
+Root-cause analysis of the startup ANR that led to this flow:
+`build/audit/ads-anr-20261001/REPORT.md`.
+
+### SDK version decision (2026-10-02) — ship on 23.5.0, migrate after launch
+
+Google's official [deprecation table](https://developers.google.com/admob/android/deprecation)
+(read 2026-10-02) lists **23.x as *deprecated*** (supported pair at the time: 24.x/25.x;
+25.5.0 raised the Android floor to API 24, which this app already meets). Deprecated
+versions still serve ads; the sunset date for 23.x is **June 30, 2027**,
+after which ad serving is at risk. Nothing in Google Play policy requires a non-deprecated
+ads SDK (unlike Billing 8+, which this app already meets with `billing:9.1.0`).
+
+Decision: the launch build keeps **23.5.0**, because that ads/consent stack is the one the
+2026-10-01/02 device campaign verified (consent-before-ads, recovered rewarded source,
+OPTIMIZE_AD_LOADING, ANR protocol). The API surface used here (`MobileAds.initialize`,
+`RewardedAd.load/show`, UMP `requestConsentInfoUpdate` / `loadAndShowConsentFormIfRequired` /
+`canRequestAds` / `showPrivacyOptionsForm`) is unchanged in 24.x/25.x, so migration is a
+version bump — but a version bump invalidates the verification and must carry its own
+device pass (fresh-consent form, test-ad load, rewarded gate, cold-start ANR smoke).
+Schedule that migration as the **first post-launch update**, well before 2027-06-30.
 
 ## 5. User Choice Billing (UAC) & target audience — Play Console side (ACTION_PLAN point 31)
 

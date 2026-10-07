@@ -1,13 +1,13 @@
-# Gear Forge — Privacy Policy
+# GearForge — Privacy Policy
 
-_Last updated: 2026-08-31_
+_Last updated: 2026-10-02_
 
-This privacy policy applies to the Gear Forge Android application ("the app"),
+This privacy policy applies to the GearForge Android application ("the app"),
 package `com.gearforge.geargenerator`.
 
 ## 1. What we do NOT collect
 
-Gear Forge does **not** require an account and does **not** collect, store or
+GearForge does **not** require an account and does **not** collect, store or
 transmit any of the following:
 
 - Names, email addresses, phone numbers or other contact details.
@@ -18,13 +18,25 @@ transmit any of the following:
 
 ## 2. Advertising (Google AdMob)
 
-The app displays Google AdMob **rewarded video ads** at the export gate. AdMob and
-its partners may use the device's **advertising identifier (Ad ID)** and other
-device information to serve and measure ads, including **personalized ads**.
+The app displays Google AdMob **rewarded video ads** at the export gate. The Google
+Mobile Ads SDK may automatically collect and share the following data for
+advertising, analytics and fraud-prevention purposes (matching Google's official
+Play data disclosure for the SDK):
+
+- **IP address**, which may be used to estimate the general location of the device.
+- **User product interactions**, including app launches, taps and video views.
+- **Diagnostic information**, such as app launch time, hang rate and energy usage.
+- **Device and account identifiers**, including the Android advertising ID (Ad ID),
+  the app set ID and, where applicable, other identifiers related to signed-in
+  accounts on the device.
+
+All of this data is encrypted in transit (TLS). AdMob and its partners may use the
+Ad ID to serve and measure ads, including **personalized ads**.
 
 - For users in the EEA/UK and other applicable regions, we show Google's UMP
   (User Messaging Platform) consent form before any ads are loaded, and the app
-  respects your consent choice.
+  respects your consent choice. Where regulators require it, a **Privacy options**
+  entry in the app's Settings lets you change or withdraw that consent at any time.
 - You can reset or opt out of personalized ads in your device settings
   (Settings → Google → Ads), or via Google's Ads Settings.
 
@@ -60,7 +72,7 @@ For privacy-related questions, contact us at: <gearforge.app@gmail.com>.
 
 ## Svensk sammanfattning (Swedish summary)
 
-Gear Forge samlar **inte in** personuppgifter, kräver inget konto och laddar inte upp
+GearForge samlar **inte in** personuppgifter, kräver inget konto och laddar inte upp
 dina filer. Appen visar **belöningsannonser via Google AdMob** vid export, vilket kan
 använda enhetens **reklam-ID** för att visa och mäta annonser (inklusive
 personanpassade annonser). Inom EES/EU visas Googles samtyckesformulär (UMP) innan

@@ -1,16 +1,18 @@
-# ASSET BRIEF — "Gear Forge" (Android)
+# ASSET BRIEF — "GearForge" (Android)
 
 > Klart att klistra in i Nano Banana / bildgenererare.
 > Generera en bild i taget. Behåll samma stil och vinkel genom hela uppsättningen.
 
 ---
 
-You are generating the complete visual asset set for **Gear Forge**, an Android
+You are generating the complete visual asset set for **GearForge**, an Android
 app (portrait, Material Design 3) where hobbyists and makers design custom gears
-for 3D printing. The user picks a gear type (spur, helical, bevel, rack, gear
-pair, planetary), tweaks parameters (teeth, module, pressure angle, bore), sees a
-real-time 3D preview, and exports STL/3MF/DXF/SVG files. The app is monetized
-with rewarded ads and a one-time "Pro" upgrade.
+for 3D printing. The user picks one of 14 gear types (spur, helical, bevel,
+rack & pinion, planetary, worm pair, internal ring, hypoid, cycloidal, harmonic
+drive, face gear, screw gear, compound, timing belt), tweaks parameters (teeth,
+module, pressure angle, bore), sees a real-time 3D preview, and exports STL, 3MF,
+STEP, IGES, SVG or DXF files. The app is monetized with rewarded ads and a
+one-time "Pro" upgrade.
 
 ## GLOBAL ART STYLE (apply to every image)
 
@@ -51,7 +53,7 @@ with rewarded ads and a one-time "Pro" upgrade.
 
 **A2 — Wordmark / logo (horizontal)**
 - Transparent PNG, ~1600×600.
-- The text "Gear Forge" in a bold, rounded geometric sans-serif, color `#00658C`.
+- The text "GearForge" in a bold, rounded geometric sans-serif, color `#00658C`.
 - Replace the "O" in "Forge" with a small gear, or place a small gear mark to
   the left of the text.
 - Minimal, flat, no drop shadow. Provide one light version (blue text on
@@ -82,7 +84,7 @@ with rewarded ads and a one-time "Pro" upgrade.
 - Hero composition: one large glowing steel-blue gear (rim-lit with `#82D1FF`),
   faint blueprint grid lines and smaller out-of-focus gears in the background,
   soft light rays.
-- Centered horizontal wordmark "Gear Forge" below the gear.
+- Centered horizontal wordmark "GearForge" below the gear.
 - Also produce a **text-free** version.
 
 **C2 — Start-screen background texture**
@@ -95,7 +97,7 @@ with rewarded ads and a one-time "Pro" upgrade.
 
 **D1 — Play Store feature graphic**
 - 1024×500 landscape.
-- "Gear Forge" wordmark on the left; 3–4 gear renders (spur, helical, bevel,
+- "GearForge" wordmark on the left; 3–4 gear renders (spur, helical, bevel,
   planetary) arranged on the right; steel-blue gradient background with a subtle
   blueprint grid.
 - Leave a clean empty area for the store tagline (no baked tagline text).
@@ -115,5 +117,5 @@ with rewarded ads and a one-time "Pro" upgrade.
 
 PNG. Transparent background for A2, B1–B6, D2. Solid backgrounds as specified
 for A1, C1, C2, D1. Same isometric 3/4 camera and same soft studio lighting on
-every gear render. No baked-in text except the "Gear Forge" wordmark in A2, C1,
+every gear render. No baked-in text except the "GearForge" wordmark in A2, C1,
 and D1.
