@@ -1,0 +1,86 @@
+import groovy.json.JsonOutput
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+
+// settings.gradle's pluginManagement.buildscript carries the R8 override that replaces AGP's bundled shrinker.
+def settingsClasspath = null
+settingsEvaluated { settings ->
+    settingsClasspath = settings.buildscript.configurations.getByName('classpath')
+}
+
+gradle.projectsEvaluated {
+    rootProject.tasks.register('dependencyInventory') {
+        group = 'verification'
+        description = 'Export resolved Maven versions and scopes for the OSV CI check.'
+        doLast {
+            def components = new TreeMap<String, Map>()
+            def scopes = []
+            def inspect = { String owner, configuration, category ->
+                def scope = "${owner}:${category}:${configuration.name}"
+                def result = configuration.incoming.resolutionResult
+                def unresolved = result.allDependencies.findAll { it instanceof UnresolvedDependencyResult }
+                if (!unresolved.empty) {
+                    throw new GradleException("Unresolved dependencies in ${scope}: ${unresolved*.attempted}")
+                }
+                def direct = result.root.dependencies.collect { it.selected.id }.toSet()
+                result.allComponents.each { component ->
+                    if (component.id instanceof ModuleComponentIdentifier) {
+                        def identifier = component.id
+                        def encode = { value -> java.net.URLEncoder.encode(value, 'UTF-8').replace('+', '%20') }
+                        def purl = "pkg:maven/${encode(identifier.group)}/${encode(identifier.module)}@${encode(identifier.version)}".toString()
+                        def record = components.computeIfAbsent(purl) {
+                            [type: 'library', 'bom-ref': purl, group: identifier.group,
+                             name: identifier.module, version: identifier.version, purl: purl,
+                             scopes: new TreeSet<String>(), directScopes: new TreeSet<String>()]
+                        }
+                        record.scopes.add(scope.toString())
+                        if (direct.contains(identifier)) {
+                            record.directScopes.add(scope.toString())
+                        }
+                    }
+                }
+                scopes.add(scope.toString())
+            }
+            rootProject.allprojects.sort { it.path }.each { project ->
+                def names = project.path == ':core'
+                    ? ['compileClasspath', 'runtimeClasspath', 'testCompileClasspath', 'testRuntimeClasspath']
+                    : project.path == ':android'
+                    ? ['debugCompileClasspath', 'debugRuntimeClasspath', 'debugUnitTestCompileClasspath',
+                       'debugUnitTestRuntimeClasspath', 'releaseCompileClasspath', 'releaseRuntimeClasspath',
+                       'releaseUnitTestCompileClasspath', 'releaseUnitTestRuntimeClasspath']
+                    : []
+                names.each { name ->
+                    def configuration = project.configurations.getByName(name)
+                    if (!configuration.canBeResolved) {
+                        throw new GradleException("Configuration cannot be resolved: ${project.path}:${name}")
+                    }
+                    inspect(project.path, configuration, 'project')
+                }
+                inspect(project.path, project.buildscript.configurations.getByName('classpath'), 'buildscript')
+            }
+            if (settingsClasspath == null) {
+                throw new GradleException('Settings buildscript classpath was not captured')
+            }
+            inspect('settings', settingsClasspath, 'buildscript')
+            if (components.empty) {
+                throw new GradleException('Resolved dependency inventory is empty')
+            }
+            def outputComponents = components.values().collect { record ->
+                def resolvedScopes = record.remove('scopes').join('\n')
+                def directScopes = record.remove('directScopes').join('\n')
+                record.properties = [
+                    [name: 'gearforge:configurations', value: resolvedScopes],
+                    [name: 'gearforge:direct-configurations', value: directScopes]
+                ]
+                record
+            }
+            def document = [bomFormat: 'CycloneDX', specVersion: '1.5', version: 1,
+                metadata: [properties: [[name: 'gearforge:resolved-configurations', value: scopes.sort().join('\n')]]],
+                components: outputComponents]
+            def destination = rootProject.layout.buildDirectory.file('reports/dependencies/resolved.cdx.json').get().asFile
+            destination.parentFile.mkdirs()
+            destination.setText(JsonOutput.prettyPrint(JsonOutput.toJson(document)) + '\n', 'UTF-8')
+            logger.lifecycle("Resolved ${components.size()} Maven versions across ${scopes.size()} configurations: ${destination}")
+        }
+    }
+}
