@@ -1,4 +1,14 @@
 pluginManagement {
+    // AGP 8.13.2 bundles R8 8.13.19, but Kotlin 2.4 requires R8 >= 9.1.29 (developer.android.com/build/kotlin-support).
+    buildscript {
+        repositories {
+            google()
+            mavenCentral()
+        }
+        dependencies {
+            classpath('com.android.tools:r8:9.1.56')
+        }
+    }
     repositories {
         google()
         mavenCentral()

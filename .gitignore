@@ -32,11 +32,21 @@ captures/
 inspect_*.png
 ui*.xml
 spoked-gear-high.stl
-tools/
 store-assets/
 core/Assets/
 Assets/Gemini_Generated_Image_*.jpg
 Assets/ChatGPT Image*.png
+
+# --- Python-tooling (tools/: compile-cache ska inte versionshanteras) ---
+__pycache__/
+*.pyc
+
+# --- tools/ versionshanteras (release- och butikspipelinen maste vara reproducerbar
+#     fran en farsk klon). Endast skriptens scratchkataloger ignoreras. ---
+tools/store-screenshots/_capture/
+tools/store-screenshots/_build/
+tools/store-screenshots/_debug/
+tools/store-assets/_build/
 
 # --- Diagnostic screenshots (do not commit) ---
 diag-screen.png

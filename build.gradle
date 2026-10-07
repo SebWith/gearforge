@@ -1,15 +1,37 @@
 buildscript {
     ext {
-        kotlinVersion = '2.0.21'
+        kotlinVersion = '2.4.20'
         agpVersion = '8.13.2'
     }
     repositories {
         google()
         mavenCentral()
-        maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
-        maven { url "https://oss.sonatype.org/content/repositories/releases/" }
+        maven { url = "https://oss.sonatype.org/content/repositories/snapshots/" }
+        maven { url = "https://oss.sonatype.org/content/repositories/releases/" }
     }
     dependencies {
+        constraints {
+            classpath('org.jdom:jdom2:2.0.6.1') {
+                because 'Fix CVE-2021-33813 in the build-tool XML parser'
+            }
+            classpath('org.bitbucket.b_c:jose4j:0.9.6') {
+                because 'Bound JWE decompression for CVE-2024-29371 in build tools'
+            }
+            classpath('org.apache.commons:commons-compress:1.26.2') {
+                because 'Fix CVE-2024-25710 and CVE-2024-26308 with the Java 8 compatible maintenance line'
+            }
+            classpath('org.apache.commons:commons-lang3:3.18.0') {
+                because 'Fix GHSA-j288-q9x7-2f5v in the transitive Commons Compress dependency'
+            }
+            ['bcprov-jdk18on', 'bcpkix-jdk18on', 'bcutil-jdk18on'].each { moduleName ->
+                classpath("org.bouncycastle:${moduleName}:1.85") {
+                    because 'Align the complete BC jdk18on family with security fixes through 1.85'
+                }
+            }
+        }
+        classpath(platform('io.netty:netty-bom:4.1.137.Final')) {
+            because 'Align all Netty modules on the patched 4.1 line used by AGP gRPC tooling'
+        }
         classpath "com.android.tools.build:gradle:$agpVersion"
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
         classpath "org.jetbrains.kotlin:compose-compiler-gradle-plugin:$kotlinVersion"
