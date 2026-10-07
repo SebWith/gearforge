@@ -1,5 +1,6 @@
 package com.gearforge.app
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -35,11 +36,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gearforge.core.GearParams
@@ -53,58 +58,133 @@ import kotlinx.coroutines.delay
  * go the custom route to tune every parameter by hand. The custom page is pre-filled
  * with the type's standard default so all parameters are visible and editable.
  */
+/**
+ * The wizard's step machine.
+ *
+ * Kept out of the composable because two things have to agree about it: the visible Back button and
+ * the system back gesture. They did not: the Back button walked one step at a time, while a back
+ * press left the whole wizard from any step — so two taps in, one gesture threw the choice away. On
+ * Android 13+ with predictive back enabled the user watches that happen before it commits, which is
+ * why the migration to API 36 required fixing the machine rather than only the manifest flag.
+ */
+internal object WizardFlow {
+    /** Step 1: which kind of gear. */
+    const val TYPE = 0
+
+    /** Step 2: a recommended preset, or the custom route. */
+    const val PRESET = 1
+
+    /** Step 3: the parameter editor, entered from the custom route. */
+    const val CUSTOM = 2
+
+    /**
+     * The step the system back gesture returns to, or `null` when it leaves the wizard.
+     *
+     * `null` at [TYPE] is the contract with [GearWizard]'s caller: the first step is the wizard's
+     * edge, so leaving it is a stage change (`onCancel`), not another step.
+     */
+    fun backFrom(step: Int): Int? = when (step) {
+        CUSTOM -> PRESET
+        PRESET -> TYPE
+        else -> null
+    }
+}
+
 @Composable
-fun GearWizard(lang: I18n.Lang, onDone: (GearParams) -> Unit, onCancel: () -> Unit) {
-    var step by remember { mutableStateOf(0) }
+fun GearWizard(
+    lang: I18n.Lang,
+    onDone: (GearParams) -> Unit,
+    onCancel: () -> Unit,
+    tipStep: Int = Tips.DONE,
+    onTipAdvance: () -> Unit = {}
+) {
+    var step by remember { mutableIntStateOf(WizardFlow.TYPE) }
     var type by remember { mutableStateOf(GearType.SPUR) }
 
     fun selectType(t: GearType) {
         type = t
-        step = 1
+        step = WizardFlow.PRESET
+    }
+
+    // The system back gesture performs exactly what the visible Back button on this step performs.
+    BackHandler {
+        val previous = WizardFlow.backFrom(step)
+        if (previous == null) onCancel() else step = previous
     }
 
     when (step) {
-        0 -> WizardTypeStep(lang = lang, onSelect = ::selectType, onCancel = onCancel)
-        1 -> PresetLibraryPage(
+        WizardFlow.TYPE -> WizardTypeStep(
+            lang = lang,
+            onSelect = ::selectType,
+            onCancel = onCancel,
+            tipStep = tipStep,
+            onTipAdvance = onTipAdvance
+        )
+        WizardFlow.PRESET -> PresetLibraryPage(
             type = type,
             lang = lang,
             onPreset = { preset -> onDone(preset.params) },
-            onCustom = { step = 2 },
-            onBack = { step = 0 },
+            onCustom = { step = WizardFlow.CUSTOM },
+            onBack = { step = WizardFlow.TYPE },
             onCancel = onCancel
         )
-        2 -> CustomParamsPage(
+        else -> CustomParamsPage(
             type = type,
             lang = lang,
             onDone = onDone,
-            onBack = { step = 1 }
+            onBack = { step = WizardFlow.PRESET }
         )
     }
 }
 
-private val PRIMARY_TYPES = listOf(
+internal val PRIMARY_TYPES = listOf(
     GearType.SPUR, GearType.BEVEL, GearType.RACK, GearType.PLANETARY,
     GearType.HELICAL, GearType.BELT
 )
 
 @Composable
-private fun WizardTypeStep(lang: I18n.Lang, onSelect: (GearType) -> Unit, onCancel: () -> Unit) {
+private fun WizardTypeStep(
+    lang: I18n.Lang,
+    onSelect: (GearType) -> Unit,
+    onCancel: () -> Unit,
+    tipStep: Int = Tips.DONE,
+    onTipAdvance: () -> Unit = {}
+) {
     var showMore by remember { mutableStateOf(false) }
     val extra = GearType.entries - PRIMARY_TYPES.toSet()
     Column(
         Modifier
             .fillMaxSize()
-            .statusBarsPadding()
+            // All system bars, not only the status bar: with 3-button navigation (API 26 emulator) the
+            // bottom buttons sat under the navigation bar's scrim, 1.6:1 and partly untappable.
+            .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
         Text(I18n.t(lang, "step_1_of_3"), style = MaterialTheme.typography.labelLarge)
-        Text(I18n.t(lang, "choose_gear_type"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(
+            I18n.t(lang, "choose_gear_type"),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.semantics { heading() }
+        )
         Text(
             I18n.t(lang, "choose_gear_hint"),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        // The walkthrough's first tip, in the page's own chrome rather than over the type grid: the
+        // thing being explained must stay visible and tappable while it is explained.
+        Tips.wizardTip(tipStep)?.let {
+            Spacer(Modifier.height(8.dp))
+            TipStrip(
+                text = I18n.t(lang, "tip_wizard_type"),
+                lang = lang,
+                isLast = false,
+                onNext = onTipAdvance,
+                onDismiss = onTipAdvance
+            )
+        }
         Spacer(Modifier.height(16.dp))
         TypeGrid(PRIMARY_TYPES, lang, onSelect)
         TextButton(onClick = { showMore = !showMore }) {
@@ -136,7 +216,7 @@ private fun TypeCard(type: GearType, lang: I18n.Lang, modifier: Modifier = Modif
     Card(
         modifier = modifier
             .padding(vertical = 6.dp)
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
     ) {
         Column(
             Modifier.padding(12.dp),
@@ -166,13 +246,14 @@ private fun PresetLibraryPage(
     onCancel: () -> Unit
 ) {
     val presets = remember(type) { Presets.forType(type) }
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().systemBarsPadding()) {
         Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
             Text(I18n.t(lang, "step_2_of_3"), style = MaterialTheme.typography.labelLarge)
             Text(
                 I18n.t(lang, "choose_preset_title"),
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.semantics { heading() }
             )
             Text(
                 I18n.t(lang, "choose_preset_hint"),
@@ -210,7 +291,7 @@ private fun PresetLibraryPage(
 @Composable
 private fun PresetCard(preset: Presets.Preset, lang: I18n.Lang, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+        modifier = Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)
     ) {
         Row(
             Modifier.padding(12.dp),
@@ -286,7 +367,7 @@ private fun moduleShort(m: Double, lang: I18n.Lang): String {
 @Composable
 private fun CustomCard(lang: I18n.Lang, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer
         )
@@ -341,7 +422,7 @@ private fun CustomParamsPage(
         previewParams = params
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().systemBarsPadding()) {
         Row(
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -351,7 +432,8 @@ private fun CustomParamsPage(
                 Text(
                     I18n.t(lang, "custom_title"),
                     style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { heading() }
                 )
                 Text(
                     I18n.t(lang, "custom_hint"),

@@ -9,6 +9,8 @@ import android.opengl.EGLContext
 import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
 import android.opengl.GLES20
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -18,12 +20,11 @@ import com.gearforge.core.Mesh
 import com.gearforge.core.Vec3
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
-import kotlin.math.sqrt
-import kotlin.math.tan
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +38,26 @@ import kotlinx.coroutines.flow.asStateFlow
  * viewport on many GPUs when the view is embedded in Compose with an edge-to-edge
  * translucent window.
  */
+/** Maximum gap between the two taps of a double tap. */
+private const val DOUBLE_TAP_MS = 300L
+
+/** A double tap may wander this far (px) and still count: fingers are not micrometers. */
+private const val DOUBLE_TAP_SLOP_PX = 24f
+
+/**
+ * Platen grid pitch in millimetres.
+ *
+ * Named rather than written into the builder because the viewport labels the grid with it: a
+ * hard-coded 10 in the geometry and a second hard-coded 10 in the label would be two definitions
+ * of the same fact, and the label would keep lying after the grid changed.
+ */
+private const val BED_GRID_MM = 10f
+
+/** The platen sits this far below the floor so the shadow is never rejected as coincident. */
+private const val BED_PLANE_OFFSET = 0.05f
+
+private val liveRendererOwners = AtomicInteger()
+
 class GearGLView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
@@ -49,7 +70,27 @@ class GearGLView @JvmOverloads constructor(
         val offsetX: Float = 0f,
         val offsetY: Float = 0f,
         val spinSpeed: Float = 0f,
-        val highlight: Boolean = false
+        val highlight: Boolean = false,
+        /**
+         * Rotation of the body's *placed centre* about the assembly origin, in rad/s.
+         *
+         * Distinct from [spinSpeed], which is the body turning about its own axis. A planet in a
+         * planetary train does both at once, and they are different numbers — that is the whole
+         * reason this field exists instead of a single "speed".
+         */
+        val orbitSpeed: Float = 0f,
+        /** Travel along +X in mm/s. A rack does not rotate, it slides. */
+        val slideSpeed: Float = 0f,
+        /** True when the body turns about X: the worm, whose screw axis runs along X. */
+        val aboutX: Boolean = false,
+        /**
+         * Colour for this body, or null for the default material.
+         *
+         * Only set when an assembly has more than one body: tinting a single gear would claim a
+         * difference that does not exist. The value comes from `GearPalette.bodyArgb`, so the body
+         * colours inherit the same contrast guarantee as the panel's section accents.
+         */
+        val colorArgb: Int? = null
     )
 
     /** Runtime diagnostics captured on the GL thread, exposed to the Compose overlay. */
@@ -70,7 +111,9 @@ class GearGLView @JvmOverloads constructor(
         val viewHeight: Int = 0,
         val glVersion: String = "",
         val glRenderer: String = "",
-        val glVendor: String = ""
+        val glVendor: String = "",
+        val rendererOwnerRetained: Boolean = false,
+        val liveRendererOwners: Int = 0
     )
 
     private val renderer = GearRenderer(context)
@@ -79,7 +122,9 @@ class GearGLView @JvmOverloads constructor(
     fun snapshotDiag(): Diag = renderer.diag.copy(
         viewAttached = isAttachedToWindow,
         viewWidth = width,
-        viewHeight = height
+        viewHeight = height,
+        rendererOwnerRetained = renderThread != null,
+        liveRendererOwners = liveRendererOwners.get()
     )
 
     var instances: List<Instance> = emptyList()
@@ -101,7 +146,61 @@ class GearGLView @JvmOverloads constructor(
             requestRender()
         }
 
+    /**
+     * Speed multiplier for the meshing playback: 1 is `MeshKinematics.DEFAULT_SPEED_RAD_PER_S`.
+     *
+     * This is deliberately a renderer setting rather than a change to the instance list. Changing
+     * the instance list would clear the spin phase and upload fresh VBOs — so the gear would snap
+     * back to its starting orientation the moment the user reached for the speed control, which is
+     * precisely when they are watching it turn.
+     *
+     * **Zero parks the clock** ([PlaybackClock.PARKED_SCALE]) and is how pause is expressed: the
+     * animation holds the coordinate it has reached. Pause therefore travels the same path as a
+     * speed change, which is the only reason it cannot move the model — an instance list rebuilt
+     * from a `playing` flag would reset the phase instead, in the same class of bug the speed
+     * control already had.
+     */
+    var playbackScale: Float = 1f
+        set(value) {
+            val safe = if (value <= 0f) {
+                PlaybackClock.PARKED_SCALE
+            } else {
+                value.coerceIn(PlaybackClock.MIN_SCALE, PlaybackClock.MAX_SCALE)
+            }
+            if (field == safe) return
+            field = safe
+            renderer.requestPlaybackScale(safe)
+            requestRender()
+        }
+
+    /**
+     * Called with the world-space point where a tap meets the primary body's mid-plane.
+     *
+     * The point is exact in the XY plane (it *is* the plane), so a consumer can compare its angle
+     * to the gear's outline; it is not necessarily on a mesh surface. A tap that cannot be resolved
+     * (edge-on view, the plane behind the camera) calls nothing.
+     */
     var onPick: ((Float, Float, Float) -> Unit)? = null
+
+    /**
+     * Print bed edge length in millimetres, or 0 to hide the bed.
+     *
+     * The bed is drawn at true scale, because the honest way to answer "does this fit on my
+     * printer?" is to show the real platen: a smaller gear then sits visibly inside it and a larger
+     * one visibly overhangs. Hidden by default, for two reasons: the standard view stays framed on
+     * the model, and re-framing to include a 220 mm platen around a 20 mm gear is a choice the user
+     * should make. Set [bedSizeMm] and call [autoFrame] together to see the platen.
+     */
+    var bedSizeMm: Float = 0f
+        set(value) {
+            if (field == value) return
+            field = value
+            renderer.bedSizeMm = value
+            // The platen's size is part of the published snapshot: the overlay labels the bed it
+            // can see, and a size that changed without a publish would leave the old number on it.
+            publishCameraState()
+            requestRender()
+        }
 
     /** When false, touch is passed through (used by the landing hero so the gear
      *  is driven only by the gyro/parallax and never by the user's fingers). */
@@ -223,62 +322,37 @@ class GearGLView @JvmOverloads constructor(
 
     // ---- TextureView / EGL plumbing -------------------------------------
 
-    private var renderThread: RenderThread? = null
-
-    private var currentSurface: SurfaceTexture? = null
-    private var currentWidth = 0
-    private var currentHeight = 0
+    private val completionHandler = Handler(Looper.getMainLooper())
+    private val renderLifecycle = RenderThreadLifecycle<SurfaceTexture, RenderThread>(
+        createWorker = { surface, width, height, released -> RenderThread(surface, width, height, released) },
+        shutdown = { it.shutdown() },
+        dispatchCompletion = { completion -> completionHandler.post { completion() } },
+        releaseSurface = { it.release() }
+    )
+    private val renderThread: RenderThread? get() = renderLifecycle.worker
 
     private fun requestRender() {
         renderThread?.requestRender()
     }
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-        currentSurface = surface
-        currentWidth = width
-        currentHeight = height
         renderer.setViewportSize(width, height)
         publishCameraState()
-        startRenderThread()
+        renderLifecycle.surfaceAvailable(surface, width, height)
     }
 
     override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
-        currentWidth = width
-        currentHeight = height
+        if (!renderLifecycle.surfaceSizeChanged(surface, width, height)) return
         renderThread?.requestSurfaceChanged(width, height)
         renderer.setViewportSize(width, height)
         publishCameraState()
     }
 
-    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-        stopRenderThread()
-        currentSurface = null
-        return true
-    }
+    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean =
+        renderLifecycle.surfaceDestroyed(surface)
 
     override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
         // Rendered on demand; nothing to do here.
-    }
-
-    private fun startRenderThread() {
-        val s = currentSurface ?: return
-        if (renderThread != null) return
-        renderThread = RenderThread(s, currentWidth, currentHeight).also { it.start() }
-    }
-
-    private fun stopRenderThread() {
-        val t = renderThread
-        renderThread = null
-        t?.shutdown()
-        // Join so EGL teardown finishes before a new thread (started on resume) touches
-        // the shared renderer/surface. A short timeout keeps the main thread responsive.
-        if (t != null && t !== Thread.currentThread()) {
-            try {
-                t.join(1000L)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-        }
     }
 
     /**
@@ -286,95 +360,84 @@ class GearGLView @JvmOverloads constructor(
      * do not leak GL resources (point 6). The render thread is recreated on [onResume].
      */
     fun onPause() {
-        stopRenderThread()
+        renderLifecycle.pause()
     }
 
     /** Recreates the render thread on resume if a surface is currently available (point 6). */
     fun onResume() {
-        startRenderThread()
+        renderLifecycle.resume()
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        renderLifecycle.attach()
         GearGLViewBridge.register(this)
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         GearGLViewBridge.unregister(this)
-        stopRenderThread()
-        currentSurface = null
+        renderLifecycle.detach()
     }
 
     /** Owns the EGL context/surface and drives on-demand frames for the [GearRenderer]. */
     private inner class RenderThread(
         private val surface: SurfaceTexture,
         private val initialWidth: Int,
-        private val initialHeight: Int
+        private val initialHeight: Int,
+        private val onReleased: () -> Unit
     ) : Thread("GearGLRenderer") {
 
-        private val lock = Object()
-        @Volatile private var renderRequested = true
-        @Volatile private var running = true
-        @Volatile private var sizeChanged = false
-        @Volatile private var pendingW = initialWidth
-        @Volatile private var pendingH = initialHeight
+        private val requests = RenderRequests(initialWidth, initialHeight)
 
         private var display: EGLDisplay? = null
+        private var displayInitialized = false
         private var context: EGLContext? = null
         private var eglSurface: EGLSurface? = null
 
-        fun requestRender() {
-            synchronized(lock) {
-                renderRequested = true
-                lock.notifyAll()
-            }
-        }
+        fun requestRender() = requests.requestFrame()
 
-        fun requestSurfaceChanged(width: Int, height: Int) {
-            synchronized(lock) {
-                pendingW = width
-                pendingH = height
-                sizeChanged = true
-                renderRequested = true
-                lock.notifyAll()
-            }
-        }
+        fun requestSurfaceChanged(width: Int, height: Int) = requests.requestResize(width, height)
 
-        fun shutdown() {
-            running = false
-            synchronized(lock) { lock.notifyAll() }
-        }
+        fun shutdown() = requests.shutdown()
 
         override fun run() {
-            if (!initEgl()) {
-                running = false
-                return
+            val viewId = System.identityHashCode(this@GearGLView)
+            if (BuildConfig.DEBUG) {
+                android.util.Log.d("GearGLLifecycle", "acquired view=$viewId liveOwners=${liveRendererOwners.incrementAndGet()}")
             }
-            var drawW = pendingW
-            var drawH = pendingH
-            renderer.onSurfaceCreated()
-            renderer.onSurfaceChanged(drawW, drawH)
-            while (running) {
-                var needSizeChange = false
-                synchronized(lock) {
-                    // Render on demand (point 20): block until a frame is explicitly
-                    // requested; there is no timer/continuous redraw loop.
-                    while (!renderRequested && running) {
-                        lock.wait()
+            runRenderWorker(
+                render = { if (requests.running && initEgl() && requests.running) renderFrames() },
+                release = {
+                    requests.shutdown()
+                    val resources = if (BuildConfig.DEBUG) renderer.resourceSummary() else ""
+                    releaseEgl()
+                    renderer.onSurfaceReleased()
+                    if (BuildConfig.DEBUG) {
+                        android.util.Log.d(
+                            "GearGLLifecycle",
+                            "released view=$viewId liveOwners=${liveRendererOwners.decrementAndGet()} " +
+                                "before=[$resources] retained=[${renderer.resourceSummary()}]"
+                        )
                     }
-                    if (running) {
-                        needSizeChange = sizeChanged
-                        if (sizeChanged) {
-                            drawW = pendingW
-                            drawH = pendingH
-                            sizeChanged = false
-                        }
-                        renderRequested = false
-                    }
+                },
+                onReleased = onReleased,
+                onFailure = { failure ->
+                    android.util.Log.e("GearGLView", "Render worker or EGL release failed", failure)
+                    renderer.reportFatal("Render worker or EGL release failed: " + failure.message)
                 }
-                if (!running) break
-                if (needSizeChange) renderer.onSurfaceChanged(drawW, drawH)
+            )
+        }
+
+        private fun renderFrames() {
+            val (initialW, initialH) = requests.size()
+            renderer.onSurfaceCreated()
+            renderer.onSurfaceChanged(initialW, initialH)
+            while (true) {
+                // Render on demand (point 20): block until a frame is explicitly
+                // requested; there is no timer/continuous redraw loop.
+                val frame = requests.awaitFrame() ?: break
+                if (frame.resized) renderer.onSurfaceChanged(frame.width, frame.height)
                 if (!EGL14.eglMakeCurrent(display, eglSurface, eglSurface, context)) {
                     renderer.reportFatal("eglMakeCurrent failed in render loop")
                     break
@@ -382,7 +445,6 @@ class GearGLView @JvmOverloads constructor(
                 renderer.onDrawFrame()
                 EGL14.eglSwapBuffers(display, eglSurface)
             }
-            releaseEgl()
         }
 
         private fun initEgl(): Boolean = try {
@@ -393,6 +455,7 @@ class GearGLView @JvmOverloads constructor(
             if (!EGL14.eglInitialize(d, version, 0, version, 1)) {
                 throw RuntimeException("eglInitialize failed")
             }
+            displayInitialized = true
             val configAttribs = intArrayOf(
                 EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
                 EGL14.EGL_RED_SIZE, 8,
@@ -420,7 +483,6 @@ class GearGLView @JvmOverloads constructor(
         } catch (t: Throwable) {
             android.util.Log.e("GearGLView", "EGL init failed", t)
             renderer.reportFatal("EGL init failed: " + t.message)
-            releaseEgl()
             false
         }
 
@@ -428,16 +490,23 @@ class GearGLView @JvmOverloads constructor(
             val d = display
             val ctx = context
             val surf = eglSurface
+            try {
+                if (d != null && displayInitialized) {
+                    val unbound = EGL14.eglMakeCurrent(d, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+                    val surfaceDestroyed = surf == null || EGL14.eglDestroySurface(d, surf)
+                    val contextDestroyed = ctx == null || EGL14.eglDestroyContext(d, ctx)
+                    val terminated = EGL14.eglTerminate(d)
+                    check(unbound && surfaceDestroyed && contextDestroyed && terminated) {
+                        "EGL release incomplete: unbound=$unbound surface=$surfaceDestroyed context=$contextDestroyed terminated=$terminated"
+                    }
+                }
+            } finally {
+                check(EGL14.eglReleaseThread()) { "eglReleaseThread failed" }
+            }
             display = null
+            displayInitialized = false
             context = null
             eglSurface = null
-            if (d != null) {
-                EGL14.eglMakeCurrent(d, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
-                if (surf != null) EGL14.eglDestroySurface(d, surf)
-                if (ctx != null) EGL14.eglDestroyContext(d, ctx)
-                EGL14.eglTerminate(d)
-                EGL14.eglReleaseThread()
-            }
         }
     }
 
@@ -456,6 +525,11 @@ class GearGLView @JvmOverloads constructor(
 
     private var lastX = 0f
     private var lastY = 0f
+
+    /** Time and place of the previous tap, so the second one can be recognised as a double tap. */
+    private var lastTapTime = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!interactive) return false
@@ -481,8 +555,27 @@ class GearGLView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 if (event.eventTime - event.downTime < 300 && abs(event.x - lastX) < 10 && abs(event.y - lastY) < 10) {
-                    pick(event.x, event.y)
-                    performClick()
+                    val now = event.eventTime
+                    if (now - lastTapTime < DOUBLE_TAP_MS &&
+                        abs(event.x - lastTapX) < DOUBLE_TAP_SLOP_PX &&
+                        abs(event.y - lastTapY) < DOUBLE_TAP_SLOP_PX
+                    ) {
+                        // Two taps in the same place means "frame this", not "select this tooth".
+                        // Getting back to a usable view is the gesture people already know, and
+                        // picking a tooth as a side effect of it would be noise — so the second tap
+                        // is swallowed and the pick never runs.
+                        lastTapTime = 0L
+                        autoFrame()
+                    } else {
+                        lastTapTime = now
+                        lastTapX = event.x
+                        lastTapY = event.y
+                        pick(event.x, event.y)
+                        performClick()
+                    }
+                } else {
+                    // A drag is never the first half of a double tap.
+                    lastTapTime = 0L
                 }
             }
         }
@@ -515,14 +608,19 @@ class GearGLView @JvmOverloads constructor(
         }
         val radius = hypot(hypot(maxX - minX, maxY - minY), maxZ - minZ) / 2.0
         val centerZ = (minZ + maxZ) / 2.0
+        // A visible platen has to be inside the frame, otherwise switching it on would show a model
+        // floating in a grid that runs off screen and the bed edge — the thing the user is looking
+        // for — would never be visible.
+        val bedHalf = bedSizeMm / 2f * 1.15f
+        val framedRadius = maxOf(radius.toFloat(), bedHalf)
         renderer.panX = (-(minX + maxX) / 2.0).toFloat()
         renderer.panY = (-(minY + maxY) / 2.0).toFloat()
         renderer.rotX = 35f
         renderer.rotY = 45f
         renderer.zoom = 1f
-        renderer.frameRadius = radius.toFloat()
+        renderer.frameRadius = framedRadius
         renderer.centerZ = centerZ.toFloat()
-        renderer.shadowRadius = radius.toFloat() * 1.15f
+        renderer.shadowRadius = framedRadius * 1.15f
         renderer.floorZ = (minZ - radius * 0.25).toFloat()
         publishCameraState()
         requestRender()
@@ -537,21 +635,27 @@ class GearGLView @JvmOverloads constructor(
 
     private fun pick(x: Float, y: Float) {
         val ray = renderer.rayFromScreen(x, y, width, height) ?: return
-        var bestT = Float.MAX_VALUE
-        var best: Vec3? = null
-        for (inst in instances) {
-            for (t in inst.mesh.triangles) {
-                val a = inst.mesh.vertices[t[0]]
-                val b = inst.mesh.vertices[t[1]]
-                val c = inst.mesh.vertices[t[2]]
-                val hit = rayTriangle(ray.first, ray.second, a, b, c)
-                if (hit != null && hit.t in 0f..bestT) {
-                    bestT = hit.t
-                    best = hit.point
-                }
-            }
+        val origin = ray.first
+        val dir = ray.second
+        // Edge-on: the ray lies in the mid-plane itself, so there is no single point to report.
+        if (abs(dir.z) < 1e-9) return
+        val body = instances.firstOrNull() ?: return
+        // Mid-plane of the primary body, in world space.
+        var minZ = Double.MAX_VALUE
+        var maxZ = -Double.MAX_VALUE
+        for (v in body.mesh.vertices) {
+            if (v.z < minZ) minZ = v.z
+            if (v.z > maxZ) maxZ = v.z
         }
-        best?.let { onPick?.invoke(it.x.toFloat(), it.y.toFloat(), it.z.toFloat()) }
+        if (minZ > maxZ) return
+        val plane = (minZ + maxZ) / 2.0
+        val t = (plane - origin.z) / dir.z
+        if (t <= 0.0) return
+        onPick?.invoke(
+            (origin.x + dir.x * t).toFloat(),
+            (origin.y + dir.y * t).toFloat(),
+            plane.toFloat()
+        )
     }
 
     private class GearRenderer(private val context: Context) {
@@ -599,11 +703,40 @@ class GearGLView @JvmOverloads constructor(
         private val buffers = mutableListOf<GpuMesh>()
         @Volatile
         private var pendingInstances: List<Instance>? = null
-        private var spinBase = 0L
         private val spinOffsets = mutableListOf<Float>()
 
+        /**
+         * The playback clock, owned by the GL thread.
+         *
+         * Written from the UI thread: only the *request* crosses threads, because the clock's
+         * re-origin has to happen between two frames rather than in the middle of one. The maths
+         * itself lives in [PlaybackClock], where it is unit tested.
+         */
+        private val playback = PlaybackClock()
+
+        @Volatile
+        private var requestedScale = 1f
+
+        fun requestPlaybackScale(scale: Float) {
+            requestedScale = scale
+        }
         private var shadowVbo = 0
         private var shadowCount = 0
+
+        // Print bed: a 10 mm grid plus a platen frame, in world millimetres, uploaded once per
+        // size change. Kept apart from the shadow disc because a platen is square, not radial.
+        private var bedProgram = 0
+        private var bedUvp = 0
+        private var bedUColor = 0
+        private var bedAPos = 0
+        private var bedVbo = 0
+        private var bedVertexCount = 0
+        private var bedGridVbo = 0
+        private var bedGridVertexCount = 0
+        @Volatile
+        private var pendingBed: FloatArray? = null
+        @Volatile
+        private var pendingBedGrid: FloatArray? = null
 
         // Background texture + program (Prio 5: hero background behind the 3D model).
         private var bgProgram = 0
@@ -619,7 +752,9 @@ class GearGLView @JvmOverloads constructor(
 
         /** Translate the scene in world units from a screen-space drag delta (pixels). */
         fun panBy(dxPx: Float, dyPx: Float) {
-            val r = if (frameRadius > 0f) frameRadius else 20f
+            // The same framing radius the projection was built from — a second fallback of 20 here
+            // would make the pan ratio disagree with the eye distance at the first frame.
+            val r = ViewportCamera.radiusOr(frameRadius)
             val scale = 2f * r / viewH * zoom
             panX += dxPx * scale
             panY -= dyPx * scale
@@ -628,8 +763,63 @@ class GearGLView @JvmOverloads constructor(
         fun setSpin(index: Int, speed: Float) {
             if (index in instances.indices) {
                 instances[index] = instances[index].copy(spinSpeed = speed)
-                spinBase = System.nanoTime()
+                playback.reset(System.nanoTime(), requestedScale)
             }
+        }
+
+        /** Hiding the bed (0) is the same request as having no platen geometry to draw. */
+        var bedSizeMm: Float = 0f
+            set(value) {
+                field = value
+                setBedSize(value)
+            }
+
+        /**
+         * Builds the platen geometry for [sizeMm], or clears it when [sizeMm] is 0 or less.
+         *
+         * Drawn at true scale on purpose: a gear that is smaller than the bed has to look smaller,
+         * and one that is bigger has to visibly overhang. Scaling the platen to "fit the screen"
+         * would make the answer meaningless.
+         */
+        fun setBedSize(sizeMm: Float) {
+            if (sizeMm <= 0f) {
+                pendingBed = FloatArray(0)
+                pendingBedGrid = FloatArray(0)
+                return
+            }
+            val half = sizeMm / 2f
+            val t = (sizeMm * 0.004f).coerceAtLeast(0.4f)
+
+            // Platen frame: four bars, so the edge that decides "does it fit" stays crisp while the
+            // grid stays faint.
+            val frame = ArrayList<Float>(4 * 6 * 2)
+            fun bar(x0: Float, y0: Float, x1: Float, y1: Float) {
+                frame.add(x0); frame.add(y0)
+                frame.add(x1); frame.add(y0)
+                frame.add(x1); frame.add(y1)
+                frame.add(x0); frame.add(y0)
+                frame.add(x1); frame.add(y1)
+                frame.add(x0); frame.add(y1)
+            }
+            val inner = half - t
+            bar(-half, -half, half, -inner)      // bottom
+            bar(-half, inner, half, half)        // top
+            bar(-half, -inner, -inner, inner)    // left
+            bar(inner, -inner, half, inner)      // right
+
+            val grid = ArrayList<Float>(256)
+            var y = -half
+            while (y <= half + 1e-3f) {
+                grid.add(-half); grid.add(y); grid.add(half); grid.add(y)
+                y += BED_GRID_MM
+            }
+            var x = -half
+            while (x <= half + 1e-3f) {
+                grid.add(x); grid.add(-half); grid.add(x); grid.add(half)
+                x += BED_GRID_MM
+            }
+            pendingBed = frame.toFloatArray()
+            pendingBedGrid = grid.toFloatArray()
         }
 
         private fun rebuildBuffers() {
@@ -722,7 +912,34 @@ class GearGLView @JvmOverloads constructor(
             return positions to normals
         }
 
+        fun resourceSummary(): String {
+            val bufferCount = buffers.count { it.vbo != 0 } +
+                listOf(shadowVbo, bedVbo, bedGridVbo, bgVbo).count { it != 0 }
+            val programCount = listOf(simpleProgram, pbrProgram, shadowProgram, bedProgram, bgProgram).count { it != 0 }
+            return "buffers=$bufferCount programs=$programCount textures=${if (bgTexture != 0) 1 else 0}"
+        }
+
+        fun onSurfaceReleased() {
+            buffers.clear()
+            shadowVbo = 0
+            shadowCount = 0
+            bedVbo = 0
+            bedVertexCount = 0
+            bedGridVbo = 0
+            bedGridVertexCount = 0
+            bgVbo = 0
+            bgTexture = 0
+            simpleProgram = 0
+            pbrProgram = 0
+            shadowProgram = 0
+            bedProgram = 0
+            bgProgram = 0
+            diag = diag.copy(surfaceCreated = false, firstFrame = false, bufferCount = 0, programOk = false)
+        }
+
         fun onSurfaceCreated() {
+            onSurfaceReleased()
+            setBedSize(bedSizeMm)
             if (renderBackground) {
                 GLES20.glClearColor(0.09f, 0.11f, 0.13f, 1f)
             } else {
@@ -737,6 +954,7 @@ class GearGLView @JvmOverloads constructor(
             simpleProgram = createProgram(SIMPLE_VS, SIMPLE_FS)
             pbrProgram = createProgram(SIMPLE_VS, PBR_FS)
             shadowProgram = createProgram(SHADOW_VS, SHADOW_FS)
+            bedProgram = createProgram(BED_VS, BED_FS)
             if (renderBackground) {
                 bgProgram = createProgram(BG_VS, BG_FS)
                 bgUTex = GLES20.glGetUniformLocation(bgProgram, "uTexture")
@@ -760,7 +978,11 @@ class GearGLView @JvmOverloads constructor(
             pbrU.uRough = GLES20.glGetUniformLocation(pbrProgram, "uRough")
             sUvp = GLES20.glGetUniformLocation(shadowProgram, "uMvp")
             sAPos = GLES20.glGetAttribLocation(shadowProgram, "aPosition")
-            spinBase = System.nanoTime()
+            bedUvp = GLES20.glGetUniformLocation(bedProgram, "uMvp")
+            bedUColor = GLES20.glGetUniformLocation(bedProgram, "uColor")
+            bedAPos = GLES20.glGetAttribLocation(bedProgram, "aPosition")
+            playback.reset(System.nanoTime(), requestedScale)
+            rebuildBuffers()
             checkGlError("onSurfaceCreated")
             val glVersion = GLES20.glGetString(GLES20.GL_VERSION) ?: "?"
             val glRenderer = GLES20.glGetString(GLES20.GL_RENDERER) ?: "?"
@@ -804,35 +1026,35 @@ class GearGLView @JvmOverloads constructor(
         }
 
         /**
-         * Builds a [CameraState] from the current camera fields using the same view and
-         * projection math as [onDrawFrame] (fovY = 35°, aspect from the viewport). The
-         * rotation quaternion is the equivalent camera orientation `R⁻¹` of the orbit.
+         * Builds a [CameraState] from the current camera fields using exactly the matrices
+         * [onDrawFrame] draws with. The rotation quaternion is the equivalent camera orientation
+         * `R⁻¹` of the orbit.
+         *
+         * The matrices come from [ViewportCamera] rather than from a copy of its maths. That is the
+         * point of the extraction: this snapshot used to re-derive the projection and the view
+         * while forgetting the model rotation and the pan, so every overlay that trusted it drew
+         * in the wrong place. One definition means they cannot disagree again.
          */
         fun snapshotCameraState(): CameraState {
-            val aspect = if (viewH > 0) viewW.toFloat() / viewH else 1f
-            val fovy = 35f
-            val halfFovY = Math.toRadians((fovy / 2f).toDouble())
-            val halfFovX = Math.atan(Math.tan(halfFovY) * aspect)
-            val minHalf = minOf(halfFovY, halfFovX)
-            val radius = if (frameRadius > 0f) frameRadius else 20f
-            val eyeDist = (radius / Math.sin(minHalf)).toFloat() * zoom
-            val near = maxOf(0.01f, eyeDist - radius * 4f)
-            val far = eyeDist + radius * 8f
-            val proj = perspective(fovy, aspect, near, far)
-            val eye = floatArrayOf(0f, 0f, eyeDist)
-            val target = floatArrayOf(0f, 0f, centerZ)
-            val view = lookAt(eye, target, floatArrayOf(0f, 1f, 0f))
+            val radius = ViewportCamera.radiusOr(frameRadius)
+            val eyeDist = ViewportCamera.eyeDistance(radius, viewW, viewH, zoom)
+            val bedPlane = floorZ - BED_PLANE_OFFSET
             return CameraState(
                 rotXDeg = rotX,
                 rotYDeg = rotY,
                 zoom = zoom,
                 panX = panX,
                 panY = panY,
-                eye = eye,
-                target = target,
+                eye = floatArrayOf(0f, 0f, eyeDist),
+                target = floatArrayOf(0f, 0f, centerZ),
                 rotationQuaternion = gizmoQuaternion(rotX, rotY),
-                viewMatrix = view,
-                projectionMatrix = proj,
+                viewMatrix = ViewportCamera.view(centerZ, eyeDist),
+                projectionMatrix = ViewportCamera.projection(radius, viewW, viewH, zoom),
+                modelMatrix = ViewportCamera.orbitModel(rotX, rotY, panX, panY),
+                bedMatrix = ViewportCamera.bedModel(panX, panY, bedPlane),
+                bedSizeMm = if (bedSizeMm > 0f) bedSizeMm else 0f,
+                bedGridMm = if (bedSizeMm > 0f) BED_GRID_MM else 0f,
+                bedZ = bedPlane,
                 viewportWidth = viewW,
                 viewportHeight = viewH,
                 frameRadius = radius
@@ -849,22 +1071,17 @@ class GearGLView @JvmOverloads constructor(
                 repeat(list.size) { spinOffsets.add(0f) }
                 rebuildBuffers()
                 pendingInstances = null
-                spinBase = System.nanoTime()
+                playback.reset(System.nanoTime(), requestedScale)
             }
             if (instances.isEmpty()) return
 
-            val aspect = if (viewH > 0) viewW.toFloat() / viewH else 1f
-            val fovy = 35f
-            val halfFovY = Math.toRadians((fovy / 2f).toDouble())
-            val halfFovX = Math.atan(Math.tan(halfFovY) * aspect)
-            val minHalf = minOf(halfFovY, halfFovX)
-            val radius = if (frameRadius > 0f) frameRadius else 20f
-            val eyeDist = (radius / Math.sin(minHalf)).toFloat() * zoom
-            val near = maxOf(0.01f, eyeDist - radius * 4f)
-            val far = eyeDist + radius * 8f
-            val proj = perspective(fovy, aspect, near, far)
+            // The camera comes from ViewportCamera, the same object that fills CameraState for the
+            // overlays and the pick ray. One definition, so the drawings and the labels agree.
+            val radius = ViewportCamera.radiusOr(frameRadius)
+            val eyeDist = ViewportCamera.eyeDistance(radius, viewW, viewH, zoom)
+            val proj = ViewportCamera.projection(radius, viewW, viewH, zoom)
             val eye = floatArrayOf(0f, 0f, eyeDist)
-            val view = lookAt(eye, floatArrayOf(0f, 0f, centerZ), floatArrayOf(0f, 1f, 0f))
+            val view = ViewportCamera.view(centerZ, eyeDist)
 
             var program = if (quality == Quality.HIGH) pbrProgram else simpleProgram
             if (program == 0) program = if (pbrProgram != 0) pbrProgram else simpleProgram
@@ -872,27 +1089,59 @@ class GearGLView @JvmOverloads constructor(
                 android.util.Log.e("GearGLView", "no usable shader program, cannot draw")
                 return
             }
+
+            // Upload a changed platen before anything is drawn, on the GL thread.
+            pendingBed?.let { verts ->
+                val grid = pendingBedGrid ?: FloatArray(0)
+                pendingBed = null
+                pendingBedGrid = null
+                val frame = uploadBed(verts, bedVbo)
+                bedVertexCount = frame.first
+                bedVbo = frame.second
+                val lines = uploadBed(grid, bedGridVbo)
+                bedGridVertexCount = lines.first
+                bedGridVbo = lines.second
+            }
+            drawBed(proj, view)
+
             GLES20.glUseProgram(program)
             val usePbr = program == pbrProgram
 
-            val t = (System.nanoTime() - spinBase) / 1e9f
+            // Re-origin the playback clock when the speed changed: scaling the elapsed time
+            // directly would jump the train to a different orientation, and the user changes the
+            // speed *while* watching it move. [PlaybackClock] keeps the accumulated angle
+            // continuous, and `PlaybackClockTest` proves it.
+            val t = playback.timeSeconds(System.nanoTime(), requestedScale)
             for (i in instances.indices) {
                 val inst = instances[i]
                 val spin = if (inst.spinSpeed != 0f) spinOffsets[i] + t * inst.spinSpeed else spinOffsets[i]
-                val model = mul(
-                    rotationY(rotY),
-                    mul(rotationX(rotX), mul(translation(inst.offsetX + panX, inst.offsetY + panY, 0f), rotationZ(spin)))
+                // The placement is not always static: a planet is carried around the sun and a rack
+                // slides along the pitch line. Both belong to the placement, applied before the
+                // body's own rotation, so that rotation stays about the body's own axis. Pan is
+                // added afterwards: dragging the scene must not move the bodies relative to each
+                // other, which is what orbiting the pan offset would do.
+                val placedX = inst.offsetX + t * inst.slideSpeed
+                val placedY = inst.offsetY
+                val orbit = t * inst.orbitSpeed
+                val x = if (orbit != 0f) placedX * cos(orbit) - placedY * sin(orbit) else placedX
+                val y = if (orbit != 0f) placedX * sin(orbit) + placedY * cos(orbit) else placedY
+                val turn = if (inst.aboutX) ViewportCamera.rotationX(spin) else ViewportCamera.rotationZ(spin)
+                val model = ViewportCamera.mul(
+                    ViewportCamera.rotationY(rotY),
+                    ViewportCamera.mul(
+                        ViewportCamera.rotationX(rotX),
+                        ViewportCamera.mul(ViewportCamera.translation(x + panX, y + panY, 0f), turn)
+                    )
                 )
-                val mvp = mul(proj, mul(view, model))
+                val mvp = ViewportCamera.mul(proj, ViewportCamera.mul(view, model))
                 val u = if (usePbr) pbrU else simpleU
                 GLES20.glUniformMatrix4fv(u.uMvp, 1, false, mvp, 0)
                 GLES20.glUniformMatrix4fv(u.uModel, 1, false, model, 0)
-                GLES20.glUniform3f(
-                    u.uColor,
-                    if (inst.highlight) 1.0f else 0.72f,
-                    if (inst.highlight) 0.55f else 0.76f,
-                    if (inst.highlight) 0.12f else 0.80f
-                )
+                val base = inst.colorArgb
+                val r = if (inst.highlight) 1.0f else base?.let { ((it shr 16) and 0xFF) / 255f } ?: 0.72f
+                val g = if (inst.highlight) 0.55f else base?.let { ((it shr 8) and 0xFF) / 255f } ?: 0.76f
+                val b = if (inst.highlight) 0.12f else base?.let { (it and 0xFF) / 255f } ?: 0.80f
+                GLES20.glUniform3f(u.uColor, r, g, b)
                 GLES20.glUniform3f(u.uLightDir, 0.35f, 0.55f, 0.75f)
                 if (usePbr) {
                     GLES20.glUniform3f(u.uCamPos, eye[0], eye[1], eye[2])
@@ -921,9 +1170,76 @@ class GearGLView @JvmOverloads constructor(
                         " buffers=" + buffers.size + " instances=" + instances.size +
                         " pbr=" + pbrProgram + " simple=" + simpleProgram +
                         " view=" + viewW + "x" + viewH + " eyeDist=" + eyeDist +
-                        " near=" + near + " far=" + far + " aspect=" + aspect + " usePbr=" + usePbr
+                        " near=" + ViewportCamera.nearPlane(eyeDist, radius) +
+                        " far=" + ViewportCamera.farPlane(eyeDist, radius) +
+                        " aspect=" + (if (viewH > 0) viewW.toFloat() / viewH else 1f) +
+                        " usePbr=" + usePbr
                 )
             }
+        }
+
+        /**
+         * Uploads a 2D vertex array into [vbo] (created when 0) and returns (vertexCount, vbo).
+         * An empty array releases the buffer and reports zero vertices.
+         */
+        private fun uploadBed(verts: FloatArray, vbo: Int): Pair<Int, Int> {
+            if (verts.isEmpty()) {
+                if (vbo != 0) GLES20.glDeleteBuffers(1, intArrayOf(vbo), 0)
+                return 0 to 0
+            }
+            var id = vbo
+            if (id == 0) {
+                val arr = IntArray(1)
+                GLES20.glGenBuffers(1, arr, 0)
+                id = arr[0]
+            }
+            GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, id)
+            val data = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder())
+            val fb = data.asFloatBuffer()
+            fb.put(verts); fb.flip()
+            GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, verts.size * 4, fb, GLES20.GL_STATIC_DRAW)
+            return verts.size / 2 to id
+        }
+
+        /**
+         * Draws the platen in world millimetres, on the same horizontal plane as the shadow.
+         *
+         * The plane is not rotated with the orbit: a print bed is a table, so it must stay flat when
+         * the model is orbited above it, exactly like the shadow it already casts. It does follow the
+         * pan, because panning moves the whole scene across the table.
+         */
+        private fun drawBed(proj: FloatArray, view: FloatArray) {
+            // A missing uniform or attribute would make every call below a silent GL error.
+            if (bedProgram == 0 || bedAPos < 0 || bedUvp < 0) return
+            if (bedVertexCount == 0 && bedGridVertexCount == 0) return
+            // A hair below the shadow's plane so the shadow is never rejected as coincident geometry.
+            val bedZ = floorZ - BED_PLANE_OFFSET
+            val model = ViewportCamera.bedModel(panX, panY, bedZ)
+            val mvp = ViewportCamera.viewProjection(view, proj, model)
+            GLES20.glUseProgram(bedProgram)
+            GLES20.glEnable(GLES20.GL_BLEND)
+            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+            // The grid lies exactly on the platen, so the default LESS test would reject it as
+            // coincident with the frame; LEQUAL lets the later draw win instead of z-fighting.
+            GLES20.glDepthFunc(GLES20.GL_LEQUAL)
+            GLES20.glUniformMatrix4fv(bedUvp, 1, false, mvp, 0)
+            GLES20.glEnableVertexAttribArray(bedAPos)
+
+            if (bedGridVertexCount > 0) {
+                GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, bedGridVbo)
+                GLES20.glVertexAttribPointer(bedAPos, 2, GLES20.GL_FLOAT, false, 0, 0)
+                GLES20.glUniform4f(bedUColor, 0.62f, 0.68f, 0.75f, 0.20f)
+                GLES20.glDrawArrays(GLES20.GL_LINES, 0, bedGridVertexCount)
+            }
+            if (bedVertexCount > 0) {
+                GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, bedVbo)
+                GLES20.glVertexAttribPointer(bedAPos, 2, GLES20.GL_FLOAT, false, 0, 0)
+                GLES20.glUniform4f(bedUColor, 0.78f, 0.84f, 0.94f, 0.55f)
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, bedVertexCount)
+            }
+
+            GLES20.glDepthFunc(GLES20.GL_LESS)
+            GLES20.glDisable(GLES20.GL_BLEND)
         }
 
         private fun drawShadow(proj: FloatArray, view: FloatArray) {
@@ -940,7 +1256,7 @@ class GearGLView @JvmOverloads constructor(
                 0f, 0f, s, 0f,
                 0f, 0f, floorZ, 1f
             )
-            val mvp = mul(proj, mul(view, model))
+            val mvp = ViewportCamera.viewProjection(view, proj, model)
             GLES20.glUniformMatrix4fv(sUvp, 1, false, mvp, 0)
             GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, shadowVbo)
             GLES20.glEnableVertexAttribArray(sAPos)
@@ -951,83 +1267,28 @@ class GearGLView @JvmOverloads constructor(
             GLES20.glDisable(GLES20.GL_BLEND)
         }
 
-        fun rayFromScreen(x: Float, y: Float, width: Int, height: Int): Pair<Vec3, Vec3>? {
-            if (width <= 0 || height <= 0) return null
-            val aspect = width.toFloat() / height
-            val tanFov = tan(Math.toRadians(17.5))
-            val ndcX = (2f * x / width - 1f)
-            val ndcY = (1f - 2f * y / height)
-            val dir = Vec3((ndcX * tanFov * aspect).toDouble(), (ndcY * tanFov).toDouble(), -1.0)
-            val origin = Vec3(0.0, 0.0, 40.0 * zoom)
-            return invRotate(origin) to invRotate(dir)
-        }
-
-        private fun invRotate(v: Vec3): Vec3 {
-            val ry = Math.toRadians(rotY.toDouble())
-            val cy = cos(ry); val sy = sin(ry)
-            val v1 = Vec3(v.x * cy - v.z * sy, v.y, v.x * sy + v.z * cy)
-            val rx = Math.toRadians(rotX.toDouble())
-            val cx = cos(rx); val sx = sin(rx)
-            return Vec3(v1.x, v1.y * cx + v1.z * sx, -v1.y * sx + v1.z * cx)
-        }
-
-        private fun rotationX(a: Float): FloatArray {
-            val r = Math.toRadians(a.toDouble())
-            val c = cos(r).toFloat(); val s = sin(r).toFloat()
-            return floatArrayOf(1f, 0f, 0f, 0f, 0f, c, s, 0f, 0f, -s, c, 0f, 0f, 0f, 0f, 1f)
-        }
-        private fun rotationY(a: Float): FloatArray {
-            val r = Math.toRadians(a.toDouble())
-            val c = cos(r).toFloat(); val s = sin(r).toFloat()
-            return floatArrayOf(c, 0f, -s, 0f, 0f, 1f, 0f, 0f, s, 0f, c, 0f, 0f, 0f, 0f, 1f)
-        }
-        private fun rotationZ(a: Float): FloatArray {
-            val r = Math.toRadians(a.toDouble())
-            val c = cos(r).toFloat(); val s = sin(r).toFloat()
-            return floatArrayOf(c, s, 0f, 0f, -s, c, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)
-        }
-        private fun translation(x: Float, y: Float, z: Float): FloatArray =
-            floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, x, y, z, 1f)
-
-        private fun perspective(fovy: Float, aspect: Float, near: Float, far: Float): FloatArray {
-            val f = (1f / tan(Math.toRadians(fovy.toDouble()) / 2.0)).toFloat()
-            return floatArrayOf(
-                f / aspect, 0f, 0f, 0f,
-                0f, f, 0f, 0f,
-                0f, 0f, (far + near) / (near - far), -1f,
-                0f, 0f, (2f * far * near) / (near - far), 0f
+        /**
+         * The ray through the viewport pixel ([x], [y]), in the model's own frame.
+         *
+         * Delegates to [ViewportCamera.modelRay], which starts at the eye the camera actually has
+         * and undoes the pan as well as the orbit. This used to assume the eye sat at
+         * `(0, 0, 40 · zoom)` — a number that matched no camera the renderer ever built — and left
+         * the pan in, so a tap resolved to a point several millimetres from where it landed and
+         * could select the neighbouring tooth.
+         */
+        fun rayFromScreen(x: Float, y: Float, width: Int, height: Int): Pair<Vec3, Vec3>? =
+            ViewportCamera.modelRay(
+                rotXDeg = rotX,
+                rotYDeg = rotY,
+                panX = panX,
+                panY = panY,
+                frameRadius = frameRadius,
+                zoom = zoom,
+                viewportWidth = width,
+                viewportHeight = height,
+                screenX = x,
+                screenY = y
             )
-        }
-
-        private fun lookAt(eye: FloatArray, center: FloatArray, up: FloatArray): FloatArray {
-            val z = floatArrayOf(eye[0] - center[0], eye[1] - center[1], eye[2] - center[2])
-            val zl = sqrt(z[0] * z[0] + z[1] * z[1] + z[2] * z[2])
-            z[0] /= zl; z[1] /= zl; z[2] /= zl
-            val x = floatArrayOf(up[1] * z[2] - up[2] * z[1], up[2] * z[0] - up[0] * z[2], up[0] * z[1] - up[1] * z[0])
-            val xl = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2])
-            x[0] /= xl; x[1] /= xl; x[2] /= xl
-            val y = floatArrayOf(z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0])
-            return floatArrayOf(
-                x[0], y[0], z[0], 0f,
-                x[1], y[1], z[1], 0f,
-                x[2], y[2], z[2], 0f,
-                -(x[0] * eye[0] + x[1] * eye[1] + x[2] * eye[2]),
-                -(y[0] * eye[0] + y[1] * eye[1] + y[2] * eye[2]),
-                -(z[0] * eye[0] + z[1] * eye[1] + z[2] * eye[2]), 1f
-            )
-        }
-
-        private fun mul(a: FloatArray, b: FloatArray): FloatArray {
-            // Column-major 4x4 multiply: result = A * B.
-            val r = FloatArray(16)
-            for (i in 0 until 4) {
-                for (j in 0 until 4) {
-                    r[i * 4 + j] =
-                        a[j] * b[i * 4] + a[4 + j] * b[i * 4 + 1] + a[8 + j] * b[i * 4 + 2] + a[12 + j] * b[i * 4 + 3]
-                }
-            }
-            return r
-        }
 
         private fun createProgram(vs: String, fs: String): Int {
             val v = compile(GLES20.GL_VERTEX_SHADER, vs)
@@ -1241,6 +1502,24 @@ class GearGLView @JvmOverloads constructor(
                 }
             """.trimIndent()
 
+            // The print bed: flat colour over a world-space XY mesh, so the platen keeps its true
+            // size on screen instead of being a screen-space decoration.
+            private val BED_VS = """
+                attribute vec2 aPosition;
+                uniform mat4 uMvp;
+                void main() {
+                    gl_Position = uMvp * vec4(aPosition, 0.0, 1.0);
+                }
+            """.trimIndent()
+
+            private val BED_FS = """
+                precision mediump float;
+                uniform vec4 uColor;
+                void main() {
+                    gl_FragColor = uColor;
+                }
+            """.trimIndent()
+
             private val BG_VS = """
                 attribute vec2 aPosition;
                 attribute vec2 aTexCoord;
@@ -1294,24 +1573,4 @@ object GearGLViewBridge {
     }
 
     private fun snapshot(): List<GearGLView> = synchronized(this) { views.filterNotNull() }
-}
-
-private data class Hit(val t: Float, val point: Vec3)
-
-private fun rayTriangle(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3): Hit? {
-    val e1 = b - a
-    val e2 = c - a
-    val p = dir.cross(e2)
-    val det = e1.x * p.x + e1.y * p.y + e1.z * p.z
-    if (abs(det) < 1e-9) return null
-    val inv = 1.0 / det
-    val tvec = origin - a
-    val u = (tvec.x * p.x + tvec.y * p.y + tvec.z * p.z) * inv
-    if (u < 0.0 || u > 1.0) return null
-    val q = tvec.cross(e1)
-    val v = (dir.x * q.x + dir.y * q.y + dir.z * q.z) * inv
-    if (v < 0.0 || u + v > 1.0) return null
-    val t = (e2.x * q.x + e2.y * q.y + e2.z * q.z) * inv
-    if (t < 0.0) return null
-    return Hit(t.toFloat(), origin + dir * t)
 }

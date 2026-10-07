@@ -3,6 +3,7 @@ package com.gearforge.app
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.os.Process
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
@@ -17,12 +18,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.core.graphics.createBitmap
 import com.gearforge.core.GearBuilder
 import com.gearforge.core.GearParams
 import com.gearforge.core.GearSpec
 import com.gearforge.core.GearType
 import com.gearforge.core.Vec3
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -31,8 +34,12 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 
 /**
  * Renders the real 3D gear mesh (the app's own [GearBuilder.assembly] geometry) into a
@@ -48,32 +55,38 @@ import kotlinx.coroutines.withContext
 object GearPreviewRenderer {
 
     private const val SIZE = 320
-    private val cache = ConcurrentHashMap<String, Bitmap>()
 
-    /** Returns (creating/caching if needed) the 3D preview bitmap for [type] tinted [baseArgb]. */
-    fun preview(type: GearType, baseArgb: Int): Bitmap? =
-        preview(GearSpec.defaults(type), baseArgb)
+    // Thumbnails are prefetch work: background priority, so they only get CPU the UI thread and
+    // the editor's own mesh build leave unused (unthrottled, they starved the parameter panel).
+    private val renderers = Executors.newFixedThreadPool(2) { task ->
+        Thread({
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            task.run()
+        }, "GearPreview").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
+    private val scope = CoroutineScope(SupervisorJob() + renderers)
+    private val cache = SingleFlightCache<String, Bitmap>(scope)
+    private val warmStarted = AtomicBoolean(false)
+    private var warmUp: Job? = null
 
     /** Returns (creating/caching if needed) the 3D preview bitmap for a concrete [params] set. */
-    fun preview(params: GearParams, baseArgb: Int): Bitmap? {
-        val key = "${params.gearType.name}:${params.hashCode()}:$baseArgb"
-        cache[key]?.let { return it }
-        // Render outside any lock so different gear types rasterise in parallel on
-        // separate dispatcher workers instead of serialising behind a single monitor.
-        val rendered = render(params, baseArgb) ?: return null
-        return cache.putIfAbsent(key, rendered) ?: rendered
-    }
+    suspend fun preview(params: GearParams, baseArgb: Int): Bitmap? =
+        cache.get("${params.gearType.name}:${params.hashCode()}:$baseArgb") { render(params, baseArgb) }
 
-    /** Pre-renders every gear-type thumbnail for both theme accents so the wizard's type
-     *  grid is populated instantly instead of filling in card-by-card. Call off the main
-     *  thread (e.g. from a background dispatcher at app start). */
-    fun warmCache() {
-        val accents = intArrayOf(LightPrimaryArgb, DarkPrimaryArgb)
-        for (accent in accents) {
-            for (type in GearType.entries) {
-                runCatching { preview(type, accent) }
+    /** Pre-renders the default thumbnail of each of [types] in [accent], once per process. */
+    fun warmCache(accent: Int, types: List<GearType>) {
+        if (!warmStarted.compareAndSet(false, true)) return
+        warmUp = scope.launch {
+            for (type in types) {
+                runCatching { preview(GearSpec.defaults(type), accent) }
+                    .onFailure { if (it is CancellationException) throw it }
             }
         }
+    }
+
+    /** Drops the warm-up thumbnails that have not started; one already rendering still lands in the cache. */
+    fun stopWarmUp() {
+        warmUp?.cancel()
     }
 
     private fun render(params: GearParams, baseArgb: Int): Bitmap? {
@@ -189,7 +202,7 @@ object GearPreviewRenderer {
             rasterize(pa, pb, pc, col, depth, pixels, n)
         }
 
-        val bitmap = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(n, n, Bitmap.Config.ARGB_8888)
 
         // Soft elliptical ground shadow under the gear for depth.
         val floorZ = minZ - radius * 0.25
@@ -286,8 +299,7 @@ fun GearPreview3D(
     var bitmap by remember(params, baseArgb) { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(params, baseArgb) {
-        val result = withContext(Dispatchers.Default) { GearPreviewRenderer.preview(params, baseArgb) }
-        bitmap = result
+        bitmap = GearPreviewRenderer.preview(params, baseArgb)
     }
 
     val image = bitmap

@@ -1,3 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
+<!--
+  Share-only roots exposed by FileProvider.
+
+  Sharing needs a content:// uri, because a file:// uri cannot be handed to another app on API 24+
+  (FileUriExposedException). The export itself already writes to the public Downloads folder through
+  MediaStore, which needs no provider at all — but putting a file there *in order to* share it would
+  leave a copy the user never asked for, and reusing an older Downloads file risks sending a stale
+  model. Each share gets a unique private file with seven-day retention. The legacy cache root
+  remains available so URIs handed out before an update do not become invalid immediately.
+
+  Scoped to `exports/` rather than all private files: a provider is an attack surface, and one that
+  cannot reach anything but the folder it was built for cannot leak anything else.
+-->
+<paths>
+  <files-path
+    name="shared_exports"
+    path="exports/"/>
+    <cache-path
+        name="exports"
+        path="exports/"/>
 </paths>

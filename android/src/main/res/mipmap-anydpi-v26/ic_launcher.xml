@@ -2,4 +2,9 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background"/>
     <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <!-- Themed icons (Android 13+). Generated from the same artwork by
+         tools/store-assets/build_store_assets.py: the system uses only the alpha of this layer, and
+         the foreground's own alpha is a near-opaque white plate, which would tint the whole square.
+         The derived layer keeps the gear and drops the plate. -->
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>
 </adaptive-icon>

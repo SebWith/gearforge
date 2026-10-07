@@ -15,17 +15,22 @@ import kotlin.math.sqrt
  *    "top" axis of the widget, +Y is "front" and +X is "right".
  *  - The orbit is implemented as a MODEL rotation `R = rotationY(rotY) * rotationX(rotX)`
  *    in front of a fixed camera (eye = (0, 0, eyeDist), target = (0, 0, centerZ),
- *    up = (0, 1, 0)). The equivalent CAMERA orientation is therefore `R⁻¹`, which is
+ *    up = (0, 1, 0)). That same `R` is what takes a world axis into view space, so it is
  *    stored as the unit quaternion [rotationQuaternion] (x, y, z, w) and used by the
- *    gizmo to project the world axes into view space.
- *  - [viewMatrix] and [projectionMatrix] are column-major 4x4 matrices, byte-for-byte
- *    identical to the GL uniforms used by [GearGLView] (vertical fov 35°, aspect from
- *    the viewport). They are derived values kept on the snapshot for downstream use;
- *    the gizmo itself only needs [rotationQuaternion].
+ *    gizmo to project the world axes onto the screen.
+ *  - [viewMatrix], [projectionMatrix], [modelMatrix] and [bedMatrix] are column-major
+ *    4x4 matrices, byte-for-byte identical to the GL uniforms used by [GearGLView]
+ *    (vertical fov 35°, aspect from the viewport). They are derived values kept on the
+ *    snapshot for downstream use. The gizmo itself only needs [rotationQuaternion];
+ *    the measurement HUD and the platen labels need [modelMatrix] as well, because the
+ *    renderer draws `P · V · M` — an overlay that projects `P · V · world` without `M`
+ *    sits still while the model turns.
  *
  * Equality is defined on the scalar camera parameters only (the matrices and quaternion
  * are pure functions of those scalars), so [androidx.compose.runtime.State] equality and
- * `StateFlow` de-duplication behave correctly across publishes.
+ * `StateFlow` de-duplication behave correctly across publishes. Every scalar that feeds a
+ * matrix is therefore listed in [equals] — including the platen's, or a bed that changed
+ * size under a running composition would never republish.
  */
 data class CameraState(
     val rotXDeg: Float = 35f,
@@ -38,12 +43,32 @@ data class CameraState(
     val rotationQuaternion: FloatArray = floatArrayOf(0f, 0f, 0f, 1f),
     val viewMatrix: FloatArray = FloatArray(16),
     val projectionMatrix: FloatArray = FloatArray(16),
+    /**
+     * World → orbit-space transform `Ry(rotY) · Rx(rotX) · T(pan)`, exactly what the
+     * renderer draws the bodies with. Picking and every overlay must apply it; see
+     * [ViewportCamera.orbitModel].
+     */
+    val modelMatrix: FloatArray = IDENTITY,
+    /**
+     * World → platen transform. Translation only — the bed does not take the orbit
+     * rotation, so it stays flat while the model turns above it.
+     */
+    val bedMatrix: FloatArray = IDENTITY,
+    /** Platen side in millimetres, or 0 when the bed is hidden. */
+    val bedSizeMm: Float = 0f,
+    /** Platen grid pitch in millimetres, or 0 when the bed is hidden. */
+    val bedGridMm: Float = 0f,
+    /** Platen plane in world Z, so an overlay can place a label on the bed it draws. */
+    val bedZ: Float = 0f,
     val viewportWidth: Int = 0,
     val viewportHeight: Int = 0,
     val frameRadius: Float = 20f
 ) {
     /** The gizmo is only meaningful once the GL surface has reported a non-zero size. */
     val isAvailable: Boolean get() = viewportWidth > 0 && viewportHeight > 0
+
+    /** True when the renderer is drawing a platen this snapshot can label. */
+    val bedVisible: Boolean get() = bedSizeMm > 0f
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -55,7 +80,10 @@ data class CameraState(
             panY == other.panY &&
             viewportWidth == other.viewportWidth &&
             viewportHeight == other.viewportHeight &&
-            frameRadius == other.frameRadius
+            frameRadius == other.frameRadius &&
+            bedSizeMm == other.bedSizeMm &&
+            bedGridMm == other.bedGridMm &&
+            bedZ == other.bedZ
     }
 
     override fun hashCode(): Int {
@@ -67,7 +95,20 @@ data class CameraState(
         h = 31 * h + viewportWidth
         h = 31 * h + viewportHeight
         h = 31 * h + frameRadius.hashCode()
+        h = 31 * h + bedSizeMm.hashCode()
+        h = 31 * h + bedGridMm.hashCode()
+        h = 31 * h + bedZ.hashCode()
         return h
+    }
+
+    private companion object {
+        /**
+         * A neutral matrix for the default snapshot. The HUD returns early until the GL
+         * surface has a size, so this value is never projected; it exists so a default
+         * `CameraState` multiplies the label positions by something harmless rather than
+         * by a zero matrix, which would collapse every label onto one pixel.
+         */
+        val IDENTITY = ViewportCamera.identity()
     }
 }
 
@@ -77,7 +118,7 @@ internal object Quat {
 
     /** Unit quaternion for a rotation of [angleDeg] degrees about the axis (ax, ay, az). */
     fun fromAxisAngleDeg(ax: Float, ay: Float, az: Float, angleDeg: Float): FloatArray {
-        val half = Math.toRadians((angleDeg / 2.0).toDouble())
+        val half = Math.toRadians(angleDeg / 2.0)
         val s = sin(half).toFloat()
         val len = sqrt(ax * ax + ay * ay + az * az)
         return floatArrayOf(ax / len * s, ay / len * s, az / len * s, cos(half).toFloat())
@@ -122,13 +163,23 @@ internal object Quat {
 }
 
 /**
- * Unit quaternion for the equivalent camera orientation `R⁻¹` derived from the orbit
- * angles: `Q = qx(−rotX) ⊗ qy(−rotY)` where `qx`/`qy` are rotations about X/Y.
+ * Unit quaternion of the world → view rotation `R = Ry(rotY) · Rx(rotX)` — the orientation the
+ * renderer gives the model in front of its fixed camera.
+ *
+ * **It is `R`, not `R⁻¹`.** The gizmo asks this quaternion "which way does world +X point on
+ * screen?", and the answer is `R · x̂`. Rotating a world axis by the inverse puts it on the
+ * opposite side of the screen, which mirrors the whole navigation widget: every puck moves to
+ * where its *opposite* axis is, the puck you just tapped dims to the far side, and the widget turns
+ * the wrong way when you orbit. The renderer, the pick ray and the snap angles all agree on `R`;
+ * this quaternion was the one that disagreed.
+ *
+ * A rotation about X followed by a rotation about Y composes as `qY ⊗ qX` — [Quat.multiply]
+ * applies its right-hand operand first.
  */
 internal fun gizmoQuaternion(rotXDeg: Float, rotYDeg: Float): FloatArray =
     Quat.normalize(
         Quat.multiply(
-            Quat.fromAxisAngleDeg(1f, 0f, 0f, -rotXDeg),
-            Quat.fromAxisAngleDeg(0f, 1f, 0f, -rotYDeg)
+            Quat.fromAxisAngleDeg(0f, 1f, 0f, rotYDeg),
+            Quat.fromAxisAngleDeg(1f, 0f, 0f, rotXDeg)
         )
     )

@@ -1,18 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="com.android.vending.BILLING"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
 
+    <!-- tools:ignore on this element covers two API-gated attributes: android:enableOnBackInvokedCallback
+         and android:localeConfig, both from API 33 and therefore "unused" below minSdk 24 (lint's
+         UnusedAttribute check, https://googlesamples.github.io/android-custom-lint-rules/checks/UnusedAttribute.md.html,
+         read 2026-09-20). Being ignored on older versions is the intended behaviour, not a defect:
+         predictive back opts the app in on 13+, and localeConfig lists the EN/SV languages the
+         in-app switch already ships (res/xml/locales_config.xml). Re-check this suppression whenever
+         another API-gated attribute is added to <application>. -->
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:usesCleartextTraffic="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:supportsRtl="true"
         android:hardwareAccelerated="true"
-        android:theme="@style/Theme.GearForge">
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.GearForge"
+        tools:ignore="UnusedAttribute">
 
         <activity
             android:name=".MainActivity"
@@ -24,12 +37,11 @@
             </intent-filter>
         </activity>
 
-        <!-- AdMob App ID. Value is injected via manifestPlaceholders from android/build.gradle
-             (gradle property `admobAppId`, defaulting to Google's TEST app id). -->
-        <meta-data
-            android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="${admobAppId}"/>
-
+        <!-- Shares an exported file with another app. Added because it is now used: a previous
+             audit removed an empty FileProvider entry, and re-adding one without a caller would be
+             the same dead configuration again. The provider exposes only the app's own cache folder
+             (res/xml/file_paths.xml) and only for uris this app hands out with a read grant, so a
+             shared file cannot become a way to read anything else. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -39,5 +51,18 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"/>
         </provider>
+
+        <!-- AdMob App ID. Value is injected via manifestPlaceholders from android/build.gradle
+             (gradle property `admobAppId`, defaulting to Google's TEST app id). -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}"/>
+
+        <!-- Without this flag (default false before Mobile Ads SDK 24.0.0) RewardedAd.load runs its
+             work on the calling thread, which must be the main thread. See
+             https://developers.google.com/admob/android/optimize-initialization -->
+        <meta-data
+            android:name="com.google.android.gms.ads.flag.OPTIMIZE_AD_LOADING"
+            android:value="true"/>
     </application>
 </manifest>

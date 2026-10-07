@@ -7,11 +7,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,6 +52,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -60,8 +65,8 @@ import com.gearforge.core.GearParams
 // The hero artwork sits on a dark gradient, so the brand and controls use a fixed
 // light-on-dark palette for consistent contrast regardless of the app theme.
 private val HeroText = Color(0xFFEAF6FF)
-private val HeroAccent = Color(0xFF82D1FF)
-private val HeroOnAccent = Color(0xFF00344C)
+internal val HeroAccent = Color(0xFF82D1FF)
+internal val HeroOnAccent = Color(0xFF00344C)
 
 /** Landing page with a hero 3D gear, a premium brand lockup and one clear call-to-action. */
 @Composable
@@ -122,6 +127,7 @@ fun LandingScreen(
             Spacer(Modifier.height(if (isLandscape) 14.dp else 24.dp))
             Text(
                 I18n.t(lang, "brand_name"),
+                modifier = Modifier.semantics { heading() },
                 fontSize = when {
                     isWide -> 68.sp
                     isLandscape -> 38.sp
@@ -193,6 +199,7 @@ fun LandingScreen(
                     modifier = Modifier
                         .widthIn(max = 720.dp)
                         .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
                 ) {
                     Button(
                         onClick = onStart,
@@ -203,25 +210,26 @@ fun LandingScreen(
                         ),
                         modifier = Modifier
                             .weight(1.6f)
-                            .height(56.dp)
+                            .fillMaxHeight()
+                            .heightIn(min = 56.dp)
                     ) {
-                        Text(I18n.t(lang, "create_new_gear"), fontSize = 18.sp)
+                        Text(I18n.t(lang, "create_new_gear"), fontSize = 18.sp, textAlign = TextAlign.Center)
                     }
                     LandingSecondaryButton(
                         text = I18n.t(lang, "saved_files"),
                         onClick = { showSavedFiles = true },
                         icon = Icons.Filled.FolderOpen,
-                        modifier = Modifier.weight(1f).height(56.dp)
+                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 56.dp)
                     )
                     LandingSecondaryButton(
                         text = I18n.t(lang, "settings"),
                         onClick = onSettings,
-                        modifier = Modifier.weight(1f).height(56.dp)
+                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 56.dp)
                     )
                     LandingSecondaryButton(
                         text = I18n.t(lang, "about"),
                         onClick = onAbout,
-                        modifier = Modifier.weight(1f).height(56.dp)
+                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 56.dp)
                     )
                 }
             } else {
@@ -235,9 +243,9 @@ fun LandingScreen(
                     modifier = Modifier
                         .widthIn(max = maxContentWidth)
                         .fillMaxWidth()
-                        .height(60.dp)
+                        .heightIn(min = 60.dp)
                 ) {
-                    Text(I18n.t(lang, "create_new_gear"), fontSize = 19.sp)
+                    Text(I18n.t(lang, "create_new_gear"), fontSize = 19.sp, textAlign = TextAlign.Center)
                 }
                 Spacer(Modifier.height(12.dp))
                 LandingSecondaryButton(
@@ -247,7 +255,7 @@ fun LandingScreen(
                     modifier = Modifier
                         .widthIn(max = maxContentWidth)
                         .fillMaxWidth()
-                        .height(52.dp)
+                        .heightIn(min = 52.dp)
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(
@@ -255,16 +263,18 @@ fun LandingScreen(
                     modifier = Modifier
                         .widthIn(max = maxContentWidth)
                         .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
                 ) {
+                    // Equal heights when one label wraps at a large font scale and the other does not.
                     LandingSecondaryButton(
                         text = I18n.t(lang, "settings"),
                         onClick = onSettings,
-                        modifier = Modifier.weight(1f).height(52.dp)
+                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 52.dp)
                     )
                     LandingSecondaryButton(
                         text = I18n.t(lang, "about"),
                         onClick = onAbout,
-                        modifier = Modifier.weight(1f).height(52.dp)
+                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 52.dp)
                     )
                 }
             }
@@ -295,7 +305,7 @@ private fun LandingSecondaryButton(
             Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
         }
-        Text(text, fontSize = 16.sp)
+        Text(text, fontSize = 16.sp, textAlign = TextAlign.Center)
     }
 }
 
@@ -314,7 +324,9 @@ private fun SavedFilesSheet(
             Text(
                 I18n.t(lang, "saved_files"),
                 style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(horizontal = 20.dp)
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .semantics { heading() }
             )
             Text(
                 I18n.t(lang, "saved_files_hint"),
@@ -346,7 +358,7 @@ private fun SavedFilesSheet(
                             )
                         }
                         IconButton(onClick = { SavedConfigs.delete(context, name); files = SavedConfigs.list(context) }) {
-                            Icon(Icons.Filled.Delete, contentDescription = I18n.t(lang, "delete"))
+                            Icon(Icons.Filled.Delete, contentDescription = I18n.t(lang, "delete_saved", name))
                         }
                     }
                 }
@@ -359,7 +371,7 @@ private fun SavedFilesSheet(
 fun AboutDialog(lang: I18n.Lang, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(I18n.t(lang, "about_title")) },
+        title = { DialogTitle(I18n.t(lang, "about_title")) },
         text = { Text(I18n.t(lang, "about_body")) },
         confirmButton = { TextButton(onClick = onDismiss) { Text(I18n.t(lang, "close")) } }
     )

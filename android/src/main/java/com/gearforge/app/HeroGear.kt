@@ -5,7 +5,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.provider.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -27,18 +26,6 @@ import com.gearforge.core.ToothProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.exp
-
-/** True when the user has disabled animations (system "Remove animations" or a 0 scale). */
-private fun reduceMotionEnabled(context: Context): Boolean {
-    val resolver = context.contentResolver
-    return try {
-        Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f ||
-            Settings.Global.getFloat(resolver, Settings.Global.TRANSITION_ANIMATION_SCALE, 1f) == 0f ||
-            Settings.Global.getFloat(resolver, Settings.Global.WINDOW_ANIMATION_SCALE, 1f) == 0f
-    } catch (t: Throwable) {
-        false
-    }
-}
 
 /** A premium-looking spur gear: substantial width, a machined hub and a clean bore. */
 private fun heroGearParams(): GearParams = GearParams(
@@ -64,8 +51,7 @@ private fun heroGearParams(): GearParams = GearParams(
  */
 @Composable
 fun HeroGear(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val reduceMotion = remember { reduceMotionEnabled(context) }
+    val reduceMotion = rememberReduceMotion()
     var assembly by remember { mutableStateOf<GearAssembly?>(null) }
     var view by remember { mutableStateOf<GearGLView?>(null) }
 
@@ -136,7 +122,7 @@ private fun GyroParallax(view: GearGLView?) {
                 val dt = if (lastNs == 0L) 0.016f else ((now - lastNs) / 1e9f).coerceIn(0.001f, 0.1f)
                 lastNs = now
                 // Frame-rate-independent low-pass smoothing (~140 ms time constant).
-                val alpha = 1f - exp(-dt / 0.14f).toFloat()
+                val alpha = 1f - exp(-dt / 0.14f)
                 filteredPitch += (orientation[1] - filteredPitch) * alpha
                 filteredRoll += (orientation[2] - filteredRoll) * alpha
                 val pitchDeg = Math.toDegrees(filteredPitch.toDouble()).toFloat().coerceIn(-40f, 40f)

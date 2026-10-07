@@ -1,11 +1,16 @@
 package com.gearforge.app
 
+import android.app.LocaleManager
+import android.os.Build
 import android.os.Bundle
+import android.os.LocaleList
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -24,6 +29,20 @@ class MainActivity : ComponentActivity() {
     lateinit var billingManager: BillingManager
         private set
 
+    /**
+     * Per-app language (API 33+): mirrors the in-app EN/SV choice into the system locale for
+     * this app, so the system per-app language screen and the app agree. Below API 33 the
+     * in-app toggle alone drives every string (see [I18n]).
+     */
+    private fun applyAppLocale(lang: I18n.Lang) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            runCatching {
+                getSystemService(LocaleManager::class.java)?.applicationLocales =
+                    LocaleList.forLanguageTags(if (lang == I18n.Lang.SV) "sv" else "en")
+            }.onFailure { android.util.Log.w("MainActivity", "Per-app locale not applied", it) }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -31,6 +50,11 @@ class MainActivity : ComponentActivity() {
         // so an early crash is still captured (point 1).
         CrashReporting.init(applicationContext)
         CrashReporting.logEvent("app_launch")
+        lifecycleScope.launch(Dispatchers.IO) {
+            ExportManager.recoverIncompleteDownloads(applicationContext).onFailure {
+                android.util.Log.w("ExportManager", "Incomplete export recovery deferred", it)
+            }
+        }
 
         enableEdgeToEdge()
         settings = SettingsStore(this)
@@ -40,9 +64,12 @@ class MainActivity : ComponentActivity() {
         // UMP consent must complete before ads are initialized/loaded.
         ConsentManager(this).ensureConsent { adManager.init() }
 
-        // Pre-warm the software-rendered 3D thumbnail cache on a background thread so the
-        // wizard's gear-type grid renders instantly instead of appearing card-by-card.
-        lifecycleScope.launch(Dispatchers.Default) { GearPreviewRenderer.warmCache() }
+        // Pre-warm the wizard's first screen of 3D thumbnails in the current theme so the type grid
+        // is populated when it opens; other types and accents render on demand.
+        GearPreviewRenderer.warmCache(
+            if (settings.darkTheme) DarkPrimaryArgb else LightPrimaryArgb,
+            PRIMARY_TYPES
+        )
 
         setContent {
             // Activity-scoped ViewModel: editor type/params/stage survive rotation + process death.
@@ -52,14 +79,38 @@ class MainActivity : ComponentActivity() {
             var lang by remember { mutableStateOf(settings.lang) }
             var showAbout by remember { mutableStateOf(false) }
             var showSettings by remember { mutableStateOf(false) }
+            // New-user walkthrough position (see Tips). Held here, not in each screen, because the
+            // walkthrough spans the stages: the wizard shows the first tip and the editor the rest,
+            // and both have to agree on what is next. Mirrored into SettingsStore so it survives a
+            // restart — which is the whole point of "first run" rather than "every run".
+            var tipStep by remember { mutableIntStateOf(settings.tipsStep) }
+            fun advanceTips() {
+                tipStep = Tips.next(tipStep)
+                settings.tipsStep = tipStep
+            }
 
             val stage = editorViewModel.stage
+            // The editor shows no thumbnails: stop prefetching them so they leave its CPU alone.
+            LaunchedEffect(stage) {
+                if (stage == Stage.EDITOR) GearPreviewRenderer.stopWarmUp()
+            }
+
+            // "Show tips again" restarts from the first tip that belongs to the screen the user is
+            // actually looking at. Resetting to the wizard's tip while the editor is open would show
+            // nothing at all there — a button that appears to do nothing is worse than no button.
+            fun restartTips() {
+                tipStep = if (stage == Stage.EDITOR) Tips.EDITOR_ORBIT else Tips.FIRST
+                settings.tipsStep = tipStep
+            }
 
             AppTheme(darkTheme = darkTheme) {
+                // Stage-level back. The wizard registers its own handler (it owns its steps and
+                // normally answers first, because it is composed later); the WIZARD branch below is
+                // the safety net for "back always gets the user out", never the step navigation.
                 BackHandler(enabled = stage != Stage.LANDING) {
-                    when {
-                        stage == Stage.WIZARD -> editorViewModel.updateStage(Stage.LANDING)
-                        stage == Stage.EDITOR -> {
+                    when (stage) {
+                        Stage.WIZARD -> editorViewModel.updateStage(Stage.LANDING)
+                        Stage.EDITOR -> {
                             editorViewModel.clearEditor()
                             editorViewModel.updateStage(Stage.LANDING)
                         }
@@ -84,7 +135,9 @@ class MainActivity : ComponentActivity() {
                             editorViewModel.startEditor(p)
                             editorViewModel.updateStage(Stage.EDITOR)
                         },
-                        onCancel = { editorViewModel.updateStage(Stage.LANDING) }
+                        onCancel = { editorViewModel.updateStage(Stage.LANDING) },
+                        tipStep = tipStep,
+                        onTipAdvance = { advanceTips() }
                     )
                     Stage.EDITOR -> {
                         if (editorViewModel.params == null) {
@@ -99,12 +152,15 @@ class MainActivity : ComponentActivity() {
                                 darkTheme = darkTheme,
                                 onThemeChange = { darkTheme = it; settings.darkTheme = it },
                                 lang = lang,
-                                onLangChange = { lang = it; settings.lang = it },
+                                onLangChange = { lang = it; settings.lang = it; applyAppLocale(it) },
                                 viewModel = editorViewModel,
                                 onBack = {
                                     editorViewModel.clearEditor()
                                     editorViewModel.updateStage(Stage.LANDING)
-                                }
+                                },
+                                tipStep = tipStep,
+                                onTipAdvance = { advanceTips() },
+                                onRestartTips = { restartTips() }
                             )
                         }
                     }
@@ -113,13 +169,15 @@ class MainActivity : ComponentActivity() {
                 if (showAbout) AboutDialog(lang = lang, onDismiss = { showAbout = false })
                 if (showSettings) {
                     SettingsDialog(
+                        activity = this@MainActivity,
                         darkTheme = darkTheme,
                         onThemeChange = { darkTheme = it; settings.darkTheme = it },
                         lang = lang,
-                        onLangChange = { lang = it; settings.lang = it },
+                        onLangChange = { lang = it; settings.lang = it; applyAppLocale(it) },
                         settings = settings,
                         billingManager = billingManager,
-                        onDismiss = { showSettings = false }
+                        onDismiss = { showSettings = false },
+                        onShowTipsAgain = { restartTips() }
                     )
                 }
             }

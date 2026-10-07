@@ -1,6 +1,7 @@
 package com.gearforge.app
 
 import android.content.Context
+import androidx.core.content.edit
 import com.gearforge.core.BoreSpec
 import com.gearforge.core.BoreType
 import com.gearforge.core.GearParams
@@ -255,11 +256,25 @@ object SavedConfigs {
         return out
     }
 
-    fun save(context: Context, name: String, params: GearParams) {
+    fun save(context: Context, name: String, params: GearParams): Result<Unit> = runCatching {
         val p = prefs(context)
-        val map = runCatching { JSONObject(p.getString(MAP_KEY, "{}") ?: "{}") }.getOrElse { JSONObject() }
-        map.put(name, toJson(params))
-        p.edit().putString(MAP_KEY, map.toString()).apply()
+        val map = JSONObject(p.getString(MAP_KEY, "{}") ?: "{}")
+        // The editor names configs "Gear <epoch seconds>", so two saves inside the same
+        // second used to collide and silently overwrite the first one (JSONObject.put
+        // replaces the existing value). Make the key unique instead of losing data.
+        val key = uniqueName(map, name)
+        map.put(key, toJson(params))
+        p.edit { putString(MAP_KEY, map.toString()) }
+    }.onFailure {
+        android.util.Log.w("SavedConfigs", "Failed to save config", it)
+    }
+
+    /** Returns [name], or `name (2)`, `name (3)`… until it is unused. */
+    private fun uniqueName(map: JSONObject, name: String): String {
+        if (!map.has(name)) return name
+        var n = 2
+        while (map.has("$name ($n)")) n++
+        return "$name ($n)"
     }
 
     fun list(context: Context): List<Pair<String, GearParams>> {
@@ -278,6 +293,6 @@ object SavedConfigs {
         val p = prefs(context)
         val map = runCatching { JSONObject(p.getString(MAP_KEY, "{}") ?: "{}") }.getOrElse { return }
         map.remove(name)
-        p.edit().putString(MAP_KEY, map.toString()).apply()
+        p.edit { putString(MAP_KEY, map.toString()) }
     }
 }

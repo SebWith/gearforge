@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup rules for Android 11 (API 30) and lower.
+
+  The Android 12+ syntax lives in `data_extraction_rules.xml`; the documentation is explicit that an
+  app targeting API 31+ must ship *both* files, because the platform only reads one of them depending
+  on the version it is running (https://developer.android.com/identity/data/autobackup, read
+  2026-09-20). `android:allowBackup="false"` already covers cloud backup on these versions; the
+  exclude is stated anyway so the promise in PRIVACY_POLICY.md does not depend on an attribute whose
+  meaning changed in Android 12.
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+</full-backup-content>

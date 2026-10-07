@@ -1,6 +1,7 @@
 package com.gearforge.app
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -8,6 +9,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import com.gearforge.core.GearBuilder
+import com.gearforge.core.GearParams
 import com.gearforge.core.GearSpec
 import com.gearforge.core.GearType
 import com.gearforge.core.PlanarShape
@@ -27,12 +29,29 @@ fun GearOutline(
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified
 ) {
+    GearOutline(GearSpec.defaults(type), modifier, color)
+}
+
+/**
+ * Renders the 2D outline of a *specific* parameter set — the scrub preview's shape source.
+ *
+ * The outline comes from [GearBuilder.shape], the same function SVG and DXF export use, so the
+ * preview shows the real export geometry rather than an approximation, and it costs one polygon
+ * generation instead of a mesh triangulation plus loft plus GL upload. That is what makes a live
+ * preview affordable here while the 3D mesh stays debounced.
+ */
+@Composable
+fun GearOutline(
+    params: GearParams,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified
+) {
     val tint = if (color == Color.Unspecified) {
-        androidx.compose.material3.MaterialTheme.colorScheme.primary
+        MaterialTheme.colorScheme.primary
     } else {
         color
     }
-    val shape = remember(type) { GearBuilder.shape(GearSpec.defaults(type)) }
+    val shape = remember(params) { GearBuilder.shape(params) }
     Canvas(modifier) {
         drawPath(buildPlanarPath(shape, size.width, size.height), tint)
     }

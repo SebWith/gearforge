@@ -21,7 +21,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
@@ -90,9 +93,15 @@ object GizmoMath {
     )
 
     /**
-     * Projects the six world axis directions through the camera orientation quaternion
-     * using an orthographic mapping centred on ([centerX], [centerY]) with node orbit
-     * radius [radiusPx]. Screen y is flipped (camera +Y is up, canvas +y is down).
+     * Projects the six world axis directions into view space with an orthographic mapping centred
+     * on ([centerX], [centerY]) with node orbit radius [radiusPx]. Screen y is flipped (view +Y is
+     * up, canvas +y is down).
+     *
+     * The node for a world axis `a` lands at `R · a` — the same rotation the renderer applies to the
+     * model ([CameraState.modelMatrix] without the pan, [CameraState.rotationQuaternion]). See
+     * `GizmoMathTest.pucksMatchTheRenderersViewSpaceAxes`, which pins exactly that: a gizmo built on
+     * `R⁻¹` is a mirror image of the scene, and it looks plausible enough in a screenshot that only
+     * the comparison catches it.
      */
     fun project(camera: CameraState, centerX: Float, centerY: Float, radiusPx: Float): List<ProjectedNode> {
         val q = camera.rotationQuaternion
@@ -113,24 +122,65 @@ object GizmoMath {
     }
 
     /**
-     * Returns the snap target whose node is within [hitRadiusPx] of ([x], [y]); when
-     * several overlap the one facing the camera (largest depth) wins. Returns `null`
-     * for the gizmo background, which the caller maps to [GizmoView.HOME].
+     * Returns the snap target whose node is nearest to ([x], [y]) within [hitRadiusPx], or `null`
+     * when the tap falls on the gizmo background.
+     *
+     * **Proximity first, depth only to break an exact tie.** The nodes sit 26 dp from the centre
+     * with a 24 dp hit radius, so their hit circles cover nearly the whole 72 dp widget and
+     * overlap heavily. Selecting by depth alone made a tap that visually landed on the +X puck
+     * snap to whichever axis happened to face the camera. Depth is still needed for the one real
+     * ambiguity: when the camera looks straight down an axis, that axis and its opposite project
+     * onto the *same* point and only the facing one is visible.
      */
     fun hitTest(x: Float, y: Float, nodes: List<ProjectedNode>, hitRadiusPx: Float): GizmoView? {
         var best: GizmoView? = null
+        var bestD2 = Float.MAX_VALUE
         var bestDepth = -Float.MAX_VALUE
         val r2 = hitRadiusPx * hitRadiusPx
         for (n in nodes) {
             val dx = x - n.x
             val dy = y - n.y
-            if (dx * dx + dy * dy <= r2 && n.depth > bestDepth) {
+            val d2 = dx * dx + dy * dy
+            if (d2 > r2) continue
+            val nearer = d2 < bestD2 - TIE_EPSILON_PX2
+            val tied = d2 <= bestD2 + TIE_EPSILON_PX2
+            if (best == null || nearer || (tied && n.depth > bestDepth)) {
+                bestD2 = d2
                 bestDepth = n.depth
                 best = n.view
             }
         }
         return best
     }
+
+    /**
+     * Resolves a tap into the view to snap to, including the centre reset. Never returns null.
+     *
+     * The centre puck is an **explicit target**, not "whatever the background happens to be".
+     * It is drawn at [homeRadiusPx], but the axis hit circles reach inwards to
+     * `orbitRadius − hitRadiusPx`, which is *inside* that puck — so with the old ordering a user
+     * aiming at the visible dot hit an axis instead of HOME, and the drawn affordance lied.
+     *
+     * Both the press feedback and the release action call this, so the highlight can never
+     * announce a different target than the one the release performs.
+     */
+    fun resolveTap(
+        x: Float,
+        y: Float,
+        nodes: List<ProjectedNode>,
+        centerX: Float,
+        centerY: Float,
+        homeRadiusPx: Float,
+        hitRadiusPx: Float
+    ): GizmoView {
+        val dx = x - centerX
+        val dy = y - centerY
+        if (dx * dx + dy * dy <= homeRadiusPx * homeRadiusPx) return GizmoView.HOME
+        return hitTest(x, y, nodes, hitRadiusPx) ?: GizmoView.HOME
+    }
+
+    /** Squared-pixel tolerance for treating two nodes as equidistant from a tap. */
+    private const val TIE_EPSILON_PX2 = 1e-3f
 }
 
 /**
@@ -138,9 +188,9 @@ object GizmoMath {
  *
  * The widget is exactly 72x72 dp and draws nothing behind itself (fully transparent).
  * It projects the world axes through the current camera orientation each time
- * [cameraState] changes, so it stays in perfect sync with the orbit. Taps snap the
- * camera to the tapped axis view ([GizmoView]); tapping the centre or background
- * resets to [GizmoView.HOME].
+ * [cameraState] changes, so it stays in perfect sync with the orbit. A tap snaps to the
+ * nearest axis view; the centre puck is an explicit HOME target drawn at the same radius that
+ * is actually hit, and a tap beyond every hit circle also resets to [GizmoView.HOME].
  *
  * Touch handling owns the 72x72 area: taps are consumed (so they never reach the GL
  * surface and never trigger a mesh pick), while drags/pinches that exceed touch slop
@@ -148,6 +198,7 @@ object GizmoMath {
  * orbiting exactly as if the gesture had started on the mesh.
  *
  * @param cameraState live camera snapshot from [GearGLView.cameraState].
+ * @param lang language of the spoken name, state and actions.
  * @param onSnapToView invoked with the tapped snap target (including HOME).
  * @param onOrbit forward single-finger drags (dx, dy in px) to the camera controller.
  * @param onZoom forward pinch scale factors to the camera controller.
@@ -157,6 +208,7 @@ object GizmoMath {
 fun ViewportGizmo(
     modifier: Modifier = Modifier,
     cameraState: CameraState,
+    lang: I18n.Lang,
     onSnapToView: (GizmoView) -> Unit,
     onOrbit: (Float, Float) -> Unit = { _, _ -> },
     onZoom: (Float) -> Unit = {},
@@ -166,12 +218,16 @@ fun ViewportGizmo(
 
     val density = LocalDensity.current
     val context = LocalContext.current
-    val sizePx = with(density) { 72.dp.toPx() }
+    // The widget's own size, from `ViewportChrome`: the measurement HUD keeps its labels out of this
+    // rectangle, so the two files have to agree on where it is rather than each carry a 72.
+    val sizePx = with(density) { GIZMO_WIDGET_SIZE.toPx() }
     val centerPx = sizePx / 2f
     val orbitRadiusPx = with(density) { 26.dp.toPx() }
     val posRadiusPx = with(density) { 6.dp.toPx() }
     val negRadiusPx = with(density) { 4.5.dp.toPx() }
-    val centerRadiusPx = with(density) { 3.5.dp.toPx() }
+    // The puck is the HOME target, so it is drawn at the radius that is actually hit. Drawing it
+    // smaller than its hit area invited taps on the visible dot that resolved to an axis node.
+    val homeRadiusPx = with(density) { 9.dp.toPx() }
     val hitRadiusPx = with(density) { 24.dp.toPx() }
     val touchSlopPx = remember { android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat() }
 
@@ -190,10 +246,22 @@ fun ViewportGizmo(
 
     Canvas(
         modifier = modifier
-            .size(72.dp)
+            .size(GIZMO_WIDGET_SIZE)
+            // The pucks are tap targets only for a finger. A screen reader gets the same snaps as actions
+            // (the gizmo used to be a named but inert node, in English in every language).
             .semantics {
-                contentDescription = "Camera navigation"
-                stateDescription = frontmost?.let { "${it.name.lowercase()} view" } ?: ""
+                contentDescription = I18n.t(lang, "gizmo_desc")
+                stateDescription = frontmost?.let { I18n.t(lang, it.labelKey()) } ?: ""
+                onClick(label = I18n.t(lang, "gizmo_show", I18n.t(lang, GizmoView.HOME.labelKey()))) {
+                    currentSnap(GizmoView.HOME)
+                    true
+                }
+                customActions = GizmoView.entries.filter { it != GizmoView.HOME }.map { view ->
+                    CustomAccessibilityAction(I18n.t(lang, "gizmo_show", I18n.t(lang, view.labelKey()))) {
+                        currentSnap(view)
+                        true
+                    }
+                }
             }
             .pointerInput(cameraState) {
                 awaitEachGesture {
@@ -203,17 +271,21 @@ fun ViewportGizmo(
                     down.consume()
                     val downPos = down.position
                     var dragged = false
-                    val pressedHit = GizmoMath.hitTest(downPos.x, downPos.y, nodes, hitRadiusPx)
-                    val nearCenter = (downPos - Offset(centerPx, centerPx)).getDistance() <= hitRadiusPx
-                    pressedView = pressedHit ?: if (nearCenter) GizmoView.HOME else null
+                    // Resolve once, at press time, and reuse the result for the release. Recomputing
+                    // at release could pick a different target than the one highlighted (the nodes
+                    // move when the camera moves), and the press-time resolution already includes
+                    // the centre-puck rule.
+                    val target = GizmoMath.resolveTap(
+                        downPos.x, downPos.y, nodes, centerPx, centerPx, homeRadiusPx, hitRadiusPx
+                    )
+                    pressedView = target
 
                     while (true) {
                         val event = awaitPointerEvent()
                         val pressedCount = event.changes.count { it.pressed }
                         if (pressedCount == 0) {
                             if (!dragged) {
-                                val hit = GizmoMath.hitTest(downPos.x, downPos.y, nodes, hitRadiusPx)
-                                currentSnap(hit ?: GizmoView.HOME)
+                                currentSnap(target)
                             }
                             pressedView = null
                             break
@@ -252,7 +324,7 @@ fun ViewportGizmo(
         // Centre reset point (drawn first so a facing axis node can cover it).
         drawCircle(
             color = CenterGray.copy(alpha = 0.6f),
-            radius = centerRadiusPx,
+            radius = homeRadiusPx,
             center = Offset(centerPx, centerPx)
         )
         // Painter's order: far nodes first so near nodes draw on top when they overlap.
