@@ -95,7 +95,27 @@ to `sebwith.github.io/gearforge/` (source `main` / `docs`) and hosts the privacy
 policy Play links to, while only a repo named exactly `sebwith.github.io` can serve
 the hostname root. Editing one does not affect the other. After the file changes,
 allow up to 24 hours, or request a crawl from AdMob → Apps → app-ads.txt →
-*Search for updates*.
+*Search for updates*. Verified in AdMob 2026-10-07: *"Ditt utgivar-id hittades och
+app-ads.txt har verifierats"*.
+
+### One AdMob app only — the App ID is frozen into shipped builds (2026-10-07)
+
+The Play listing must be linked to the **existing** AdMob app, never registered as
+a new one. The App ID is compiled into the manifest of every published build:
+
+| Evidence | Value |
+|---|---|
+| App ID in the merged release manifest | `ca-app-pub-6154121627229543~9677913532` |
+| Receipt for the shipped AAB (`versionCode 10`) | `android-release.aab.verified-7e22a108….json` — `status: verified`, `appId`, `rewardedId` |
+
+`6154121627229543` is the **only** production publisher ID in the project
+(`3940256099942544` is Google's test publisher). Therefore, in AdMob's
+*Apps to confirm* flow, choose **“Lägg till … i en befintlig AdMob-app”** and pick
+the app that owns the rewarded unit `4517387519` — the dialog's own wording for
+that option is *"du har en matchande AdMob-app utan paketnamn eller butiks-id"*,
+which is exactly this situation. Creating a **new** AdMob app instead would mint a
+second App ID that no shipped build uses, leaving the store-linked entry and the
+entry that actually serves ads as two different apps.
 
 ## 2. Monetization strategy (ACTION_PLAN point 26)
 
