@@ -14,6 +14,27 @@ enum class GearType {
 /** Tooth profile standards. */
 enum class ToothProfile { INVOLUTE, CYCLOID, STRAIGHT }
 
+/**
+ * Lowest tooth count that still produces a valid flank for this profile.
+ *
+ * Involute flanks below 8 teeth are severely undercut and the circular root fillet
+ * degenerates (audit T7); cycloidal flanks cannot fit below 6 teeth with the R/4 generating
+ * circle; straight teeth are trapezoids and stay valid down to 5.
+ *
+ * Single source of truth for the floor: [GearParams.coerced] enforces it and
+ * [GearSpec.fields] advertises it. The two used to disagree — the settings field declared a
+ * flat minimum of 5 for every profile while the model raised involute gears to 8, so typing
+ * 5 was accepted, silently became 8, and produced no clamp warning (the warning compares
+ * against the field's own bounds) and no `validate()` warning (which inspects the
+ * already-coerced value).
+ */
+val ToothProfile.minTeeth: Int
+    get() = when (this) {
+        ToothProfile.CYCLOID -> 6
+        ToothProfile.STRAIGHT -> 5
+        ToothProfile.INVOLUTE -> 8
+    }
+
 /** Center bore / shaft attachment types. */
 enum class BoreType { NONE, ROUND, D_CUT, KEYWAY, HEX, SQUARE }
 
@@ -195,16 +216,9 @@ data class GearParams(
      */
     fun coerced(): GearParams {
         val m = module.takeIf { it.isFinite() && it > 0.0 }?.coerceIn(0.2, 12.0) ?: 1.0
-        // Minimum tooth count by profile: involute flanks below 8 teeth are severely
-        // undercut and the circular root fillet degenerates (audit T7); cycloidal flanks
-        // cannot fit below 6 teeth with the R/4 generating circle; straight teeth are
-        // trapezoids and stay valid down to 5.
-        val minTeeth = when (toothProfile) {
-            ToothProfile.CYCLOID -> 6
-            ToothProfile.STRAIGHT -> 5
-            ToothProfile.INVOLUTE -> 8
-        }
-        val n = teeth.coerceIn(minTeeth, 300)
+        // Minimum tooth count by profile — [ToothProfile.minTeeth] is the same constant the
+        // settings panel advertises, so the field and the model cannot drift apart.
+        val n = teeth.coerceIn(toothProfile.minTeeth, 300)
         // Profile shift beyond ±1 produces degenerate (negative-thickness or wildly
         // undercut) teeth; clamp to the printable range.
         val x = profileShift.takeIf { it.isFinite() }?.coerceIn(-1.0, 1.0) ?: 0.0
@@ -214,9 +228,8 @@ data class GearParams(
         // The centre bore must never overrun the root circle, otherwise the hole
         // polygon would intersect the tooth flanks and break the triangulation
         // (audit T1: non-manifold mesh for small gears with the default 5 mm bore).
-        val cutsBore = gearType != GearType.RACK && gearType != GearType.BELT &&
-            gearType != GearType.INTERNAL_RING && gearType != GearType.WORM_PAIR
-        val bore = if (cutsBore && bore.type != BoreType.NONE) {
+        // [Bore.cutsBore] is the single definition of which types actually cut one.
+        val bore = if (Bore.cutsBore(this) && bore.type != BoreType.NONE) {
             // The bore must clear the SHIFTED root radius r_f = m·z/2 − m·(h_f* − x):
             // a negative shift deepens the root, so using the unshifted radius would
             // let the hole overrun the undercut flanks and break the triangulation.
@@ -278,7 +291,7 @@ data class GearParams(
             beltFlangeCount = beltFlangeCount.coerceIn(0, 4),
             beltIdlerCount = beltIdlerCount.coerceIn(0, 4),
             bore = bore,
-            stage2Teeth = stage2Teeth.coerceIn(minTeeth, 300),
+            stage2Teeth = stage2Teeth.coerceIn(toothProfile.minTeeth, 300),
             stage2Module = stage2Module.takeIf { it.isFinite() && it > 0.0 }?.coerceIn(0.2, 12.0) ?: 0.8,
             stage2FaceWidth = stage2FaceWidth.takeIf { it.isFinite() && it > 0.0 }?.coerceAtMost(500.0) ?: 4.0,
             stage2PressureAngleDeg = stage2PressureAngleDeg.takeIf { it.isFinite() }?.coerceIn(1.0, 89.0) ?: 20.0,

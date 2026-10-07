@@ -122,6 +122,59 @@ object Loft {
         return MeshOps.orientOutward(Mesh(verts, tris))
     }
 
+    fun loftWithOuterChamfer(
+        shape: PlanarShape,
+        thickness: Double,
+        chamfer: Double,
+        atStart: Boolean
+    ): Mesh {
+        if (chamfer <= 0.0) return MeshBuilder.extrude(shape, thickness)
+        require(chamfer.isFinite() && chamfer <= thickness)
+        val fullShape = shape.copy(holes = shape.holes.map { hole ->
+            val distinct = ArrayList<Vec2>()
+            for (point in hole) if (distinct.none { it.dist(point) < 1e-9 }) distinct.add(point)
+            distinct
+        })
+        val inset = fullShape.copy(outer = fullShape.outer.map { radialOffset(it, -chamfer) })
+        val (profile, capTriangles) = Triangulate.triangulate(inset)
+        val outerMapping = inset.outer.zip(fullShape.outer).toMap()
+        val fullProfile = profile.map { outerMapping[it] ?: it }
+        val (fullPoints, fullTriangles) = Triangulate.triangulate(fullShape)
+        val fullIndices = fullProfile.withIndex().associate { it.value to it.index }
+        val baseTriangles = fullTriangles.map { triangle ->
+            IntArray(3) { fullIndices.getValue(fullPoints[triangle[it]]) }
+        }
+        val heights = if (atStart) listOf(0.0, chamfer, thickness).distinct()
+            else listOf(0.0, thickness - chamfer, thickness).distinct()
+        val vertexCount = profile.size
+        val vertices = ArrayList<Vec3>()
+        for (height in heights) {
+            val freeEnd = height == if (atStart) 0.0 else thickness
+            for (point in if (freeEnd) profile else fullProfile) {
+                vertices.add(Vec3(point.x, point.y, height))
+            }
+        }
+        val triangles = ArrayList<IntArray>()
+        val lastOffset = (heights.size - 1) * vertexCount
+        for (triangle in if (atStart) capTriangles else baseTriangles) {
+            triangles.add(intArrayOf(triangle[0], triangle[2], triangle[1]))
+        }
+        for (triangle in if (atStart) baseTriangles else capTriangles) {
+            triangles.add(intArrayOf(lastOffset + triangle[0], lastOffset + triangle[1], lastOffset + triangle[2]))
+        }
+        for ((start, end) in MeshBuilder.boundaryEdges(capTriangles)) {
+            for (layer in 0 until heights.size - 1) {
+                val lowerStart = layer * vertexCount + start
+                val lowerEnd = layer * vertexCount + end
+                val upperStart = lowerStart + vertexCount
+                val upperEnd = lowerEnd + vertexCount
+                triangles.add(intArrayOf(lowerStart, lowerEnd, upperEnd))
+                triangles.add(intArrayOf(lowerStart, upperEnd, upperStart))
+            }
+        }
+        return MeshOps.orientOutward(Mesh(vertices, triangles))
+    }
+
     /** Offsets the outer boundary inward and every hole outward by [amount] (radially). */
     private fun insetShape(shape: PlanarShape, amount: Double): PlanarShape =
         PlanarShape(

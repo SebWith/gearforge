@@ -16,8 +16,8 @@ object StepWriter {
 
         sb.append("ISO-10303-21;\n")
         sb.append("HEADER;\n")
-        sb.append("FILE_DESCRIPTION(('Gear Forge mesh'),'2;1');\n")
-        sb.append("FILE_NAME('gear.step','',(''),(''),'','Gear Forge','');\n")
+        sb.append("FILE_DESCRIPTION(('GearForge mesh'),'2;1');\n")
+        sb.append("FILE_NAME('gear.step','',(''),(''),'','GearForge','');\n")
         sb.append("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n")
         sb.append("ENDSEC;\nDATA;\n")
 
@@ -26,14 +26,18 @@ object StepWriter {
         sb.append("#$ctx=APPLICATION_CONTEXT('automotive design');\n")
         val ap = nxt()
         sb.append("#$ap=APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2003,#$ctx);\n")
+        val productContext = nxt()
+        sb.append("#$productContext=PRODUCT_CONTEXT('',#$ctx,'mechanical');\n")
         val product = nxt()
-        sb.append("#$product=PRODUCT('Gear','Gear','',(#$ctx));\n")
+        sb.append("#$product=PRODUCT('Gear','Gear','',(#$productContext));\n")
         val pdf = nxt()
         sb.append("#$pdf=PRODUCT_DEFINITION_FORMATION('','',#$product);\n")
         val pdc = nxt()
         sb.append("#$pdc=PRODUCT_DEFINITION_CONTEXT('',#$ctx,'design');\n")
         val pd = nxt()
         sb.append("#$pd=PRODUCT_DEFINITION('','',#$pdf,#$pdc);\n")
+        val productShape = nxt()
+        sb.append("#$productShape=PRODUCT_DEFINITION_SHAPE('','',#$pd);\n")
         val lenUnit = nxt()
         sb.append("#$lenUnit=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));\n")
         val angUnit = nxt()
@@ -67,17 +71,22 @@ object StepWriter {
         for (t in mesh.triangles) {
             val edges = IntArray(3)
             for (e in 0 until 3) {
-                val a = t[e]; val b = t[(e + 1) % 3]
+                val a = minOf(t[e], t[(e + 1) % 3])
+                val b = maxOf(t[e], t[(e + 1) % 3])
                 val k = key(a, b)
                 val ex = edgeMap[k]
                 if (ex != null) { edges[e] = ex; continue }
                 val va = mesh.vertices[a]; val vb = mesh.vertices[b]
+                val delta = vb - va
+                val direction = delta.normalized()
+                val directionId = nxt()
+                sb.append("#$directionId=DIRECTION('',(${f(direction.x)},${f(direction.y)},${f(direction.z)}));\n")
                 val dir = nxt()
-                sb.append("#$dir=VECTOR('',${f(vb.x - va.x)},${f(vb.y - va.y)},${f(vb.z - va.z)});\n")
+                sb.append("#$dir=VECTOR('',#$directionId,${f(delta.length())});\n")
                 val line = nxt()
-                sb.append("#$line=LINE('',#$pointIds[a],#$dir);\n")
+                sb.append("#$line=LINE('',#${pointIds[a]},#$dir);\n")
                 val ec = nxt()
-                sb.append("#$ec=EDGE_CURVE('',#$vertexIds[a],#$vertexIds[b],#$line,.T.);\n")
+                sb.append("#$ec=EDGE_CURVE('',#${vertexIds[a]},#${vertexIds[b]},#$line,.T.);\n")
                 edgeMap[k] = ec
                 edges[e] = ec
             }
@@ -92,35 +101,60 @@ object StepWriter {
             val oe = IntArray(3)
             for (e in 0 until 3) {
                 val o = nxt(); oe[e] = o
-                sb.append("#$o=ORIENTED_EDGE('',*,*,#${triEdges[ti][e]},.T.);\n")
+                val orientation = if (t[e] < t[(e + 1) % 3]) ".T." else ".F."
+                sb.append("#$o=ORIENTED_EDGE('',*,*,#${triEdges[ti][e]},$orientation);\n")
             }
             val loop = nxt()
             sb.append("#$loop=EDGE_LOOP('',(#${oe[0]},#${oe[1]},#${oe[2]}));\n")
             val bound = nxt()
             sb.append("#$bound=FACE_OUTER_BOUND('',#$loop,.T.);\n")
             val dirN = nxt()
-            sb.append("#$dirN=DIRECTION('',${f(nrm.x)},${f(nrm.y)},${f(nrm.z)});\n")
+            sb.append("#$dirN=DIRECTION('',(${f(nrm.x)},${f(nrm.y)},${f(nrm.z)}));\n")
+            val reference = (mesh.vertices[t[1]] - mesh.vertices[t[0]]).normalized()
             val dirR = nxt()
-            sb.append("#$dirR=DIRECTION('',1.0,0.0,0.0);\n")
+            sb.append("#$dirR=DIRECTION('',(${f(reference.x)},${f(reference.y)},${f(reference.z)}));\n")
             val ax2 = nxt()
-            sb.append("#$ax2=AXIS2_PLACEMENT_3D('',#$pointIds[t[0]],#$dirN,#$dirR);\n")
+            sb.append("#$ax2=AXIS2_PLACEMENT_3D('',#${pointIds[t[0]]},#$dirN,#$dirR);\n")
             val plane = nxt()
             sb.append("#$plane=PLANE('',#$ax2);\n")
             val face = nxt(); faceIds.add(face)
             sb.append("#$face=ADVANCED_FACE('',(#$bound),#$plane,.T.);\n")
         }
 
-        val shell = nxt()
-        sb.append("#$shell=CLOSED_SHELL('',(${faceIds.joinToString(",") { "#$it" }}));\n")
-        val solid = nxt()
-        sb.append("#$solid=MANIFOLD_SOLID_BREP('',#$shell);\n")
+        val parents = IntArray(faceIds.size) { it }
+        fun root(faceIndex: Int): Int {
+            var current = faceIndex
+            while (parents[current] != current) {
+                parents[current] = parents[parents[current]]
+                current = parents[current]
+            }
+            return current
+        }
+        val edgeOwners = HashMap<Int, Int>()
+        for (faceIndex in triEdges.indices) {
+            for (edgeId in triEdges[faceIndex]) {
+                val owner = edgeOwners.putIfAbsent(edgeId, faceIndex)
+                if (owner != null) parents[root(faceIndex)] = root(owner)
+            }
+        }
+        val components = LinkedHashMap<Int, MutableList<Int>>()
+        for (faceIndex in faceIds.indices) {
+            components.getOrPut(root(faceIndex)) { ArrayList() }.add(faceIds[faceIndex])
+        }
+        val solidIds = components.values.map { faces ->
+            val shell = nxt()
+            sb.append("#$shell=CLOSED_SHELL('',(${faces.joinToString(",") { "#$it" }}));\n")
+            val solid = nxt()
+            sb.append("#$solid=MANIFOLD_SOLID_BREP('',#$shell);\n")
+            solid
+        }
         val brep = nxt()
-        sb.append("#$brep=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#$solid),#$geo);\n")
+        sb.append("#$brep=ADVANCED_BREP_SHAPE_REPRESENTATION('',(${solidIds.joinToString(",") { "#$it" }}),#$geo);\n")
         val sr = nxt()
-        sb.append("#$sr=SHAPE_REPRESENTATION_RELATIONSHIP('','',#$brep,#$pd);\n")
+        sb.append("#$sr=SHAPE_DEFINITION_REPRESENTATION(#$productShape,#$brep);\n")
         sb.append("ENDSEC;\nEND-ISO-10303-21;\n")
         return sb.toString()
     }
 
-    private fun f(v: Double): String = String.format(Locale.US, "%.8f", v).trimEnd('0').trimEnd('.')
+    private fun f(v: Double): String = String.format(Locale.US, "%.8f", v).trimEnd('0')
 }

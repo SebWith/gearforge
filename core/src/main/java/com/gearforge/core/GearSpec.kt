@@ -159,7 +159,10 @@ object GearSpec {
                 "Diametral pitch = teeth per inch of pitch diameter."
             else "Module = pitch diameter ÷ teeth; a larger module means bigger teeth."))
         if (includeTeeth) {
-            add(number("teeth", "Teeth", ParamGroup.GEOMETRY, 5.0, 200.0, 0,
+            // The minimum is profile-dependent and comes from [ToothProfile.minTeeth] — the
+            // same constant GearParams.coerced() enforces. A flat 5 here let the user enter a
+            // tooth count the model then changed silently.
+            add(number("teeth", "Teeth", ParamGroup.GEOMETRY, p.toothProfile.minTeeth.toDouble(), 200.0, 0,
                 help = "Number of teeth; sets the pitch diameter together with the module."))
         }
         add(number("pressure_angle", "Pressure angle", ParamGroup.GEOMETRY, 14.0, 30.0, 2, "\u00b0",
@@ -320,7 +323,7 @@ object GearSpec {
         add(number("module", "Stage 1 " + moduleLabel.lowercase(), ParamGroup.GEOMETRY, moduleMin, moduleMax, 3,
             if (p.unit == UnitSystem.INCH) "1/in" else "mm",
             help = "Module of the first (primary) stage."))
-        add(number("teeth", "Stage 1 teeth", ParamGroup.GEOMETRY, 5.0, 200.0, 0,
+        add(number("teeth", "Stage 1 teeth", ParamGroup.GEOMETRY, p.toothProfile.minTeeth.toDouble(), 200.0, 0,
             help = "Number of teeth on the first stage."))
         add(number("thickness", "Stage 1 face width", ParamGroup.GEOMETRY, 1.0, 50.0, 2, "mm",
             help = "Face width of the first stage."))
@@ -408,7 +411,7 @@ object GearSpec {
                     help = "Teeth on each planet gear."),
                 number("ring_teeth", "Ring teeth", ParamGroup.GEOMETRY, 20.0, 200.0, 0,
                     help = "Teeth on the internal ring gear.")
-            ) + profileFields(p) + materialFields() + toleranceFields() + loadFields()
+            ) + profileFields(p) + boreFields(p) + materialFields() + toleranceFields() + loadFields()
 
         GearType.WORM_PAIR -> commonGeometry(p, includeTeeth = false) +
             listOf(
@@ -434,7 +437,7 @@ object GearSpec {
         GearType.CYCLOIDAL -> commonGeometry(p) + profileFields(p) + boreFields(p) + hubFields(p) +
             materialFields() + toleranceFields() + loadFields()
 
-        GearType.HARMONIC_DRIVE -> commonGeometry(p) + profileFields(p) + hubFields(p) +
+        GearType.HARMONIC_DRIVE -> commonGeometry(p) + profileFields(p) + boreFields(p) + hubFields(p) +
             materialFields() + toleranceFields() + loadFields()
 
         GearType.FACE_GEAR -> commonGeometry(p) + profileFields(p) + boreFields(p) + hubFields(p) +
@@ -533,75 +536,77 @@ object GearSpec {
         // Ignore non-finite input and pre-clamp values that would make copy() re-run
         // the init guards (module > 0, teeth >= 3, thickness > 0) and throw.
         if (!v.isFinite()) return p
+        val field = fields(p).firstOrNull { it.key == key && it.kind == FieldKind.NUMBER }
+        val value = if (field != null) v.coerceIn(field.min, field.max) else v
         return (when (key) {
-        "module" -> p.copy(module = (if (p.unit == UnitSystem.INCH) GearCalculator.diametralPitchToModule(v) else v).coerceIn(0.2, 12.0))
-        "teeth" -> p.copy(teeth = v.roundToInt().coerceIn(3, 300))
-        "pressure_angle" -> p.copy(pressureAngleDeg = v)
-        "profile_shift" -> p.copy(profileShift = v)
-        "helix_angle" -> p.copy(helixAngleDeg = v)
-        "thickness" -> p.copy(thickness = v.coerceIn(0.1, 500.0))
-        "backlash" -> p.copy(backlash = v)
-        "addendum" -> p.copy(addendumCoef = v)
-        "dedendum" -> p.copy(dedendumCoef = v)
-        "hub_diameter" -> p.copy(hubDiameter = v)
-        "hub_length" -> p.copy(hubLength = v)
-        "hub_left_length" -> p.copy(hubLeftLength = v)
-        "hub_right_length" -> p.copy(hubRightLength = v)
-        "hub_chamfer" -> p.copy(hubChamfer = v)
-        "hub_fillet" -> p.copy(hubFillet = v)
-        "hub_draft_angle" -> p.copy(hubDraftAngleDeg = v)
-        "set_screw_angle" -> p.copy(setScrewAngleDeg = v)
-        "set_screw_angle2" -> p.copy(setScrewAngle2Deg = v)
-        "set_screw_depth" -> p.copy(setScrewDepth = v)
-        "set_screw_axial_offset" -> p.copy(setScrewAxialOffset = v)
-        "root_fillet_coef" -> p.copy(rootFilletCoef = v)
-        "transition_coef" -> p.copy(transitionCoef = v)
-        "tip_chamfer" -> p.copy(tipChamfer = v)
-        "tip_relief" -> p.copy(tipRelief = v)
-        "root_relief" -> p.copy(rootRelief = v)
-        "lightening_hole_diameter" -> p.copy(lighteningHoleDiameter = v)
-        "lightening_hole_pcd" -> p.copy(lighteningHolePCD = v)
-        "lightening_hole_count" -> p.copy(lighteningHoleCount = v.roundToInt().coerceIn(0, 12))
-        "spoke_count" -> p.copy(spokeCount = v.roundToInt().coerceIn(0, 12))
-        "spoke_width" -> p.copy(spokeWidth = v)
-        "set_screw_count" -> p.copy(setScrewCount = v.roundToInt().coerceIn(0, 2))
-        "index_mark_angle" -> p.copy(indexMarkAngleDeg = v)
-        "bore_diameter" -> p.copy(bore = p.bore.copy(diameter = v))
-        "dcut_offset" -> p.copy(bore = p.bore.copy(dCutFlatOffset = v))
-        "keyway_width" -> p.copy(bore = p.bore.copy(keywayWidth = v))
-        "keyway_depth" -> p.copy(bore = p.bore.copy(keywayDepth = v))
-        "hex_flats" -> p.copy(bore = p.bore.copy(hexAcrossFlats = v))
-        "square_flats" -> p.copy(bore = p.bore.copy(squareAcrossFlats = v))
-        "cone_angle" -> p.copy(coneAngleDeg = v)
-        "pitch_cone" -> p.copy(pitchConeDeg = v)
-        "mounting_distance" -> p.copy(mountingDistance = v)
-        "pinion_teeth" -> p.copy(pinionTeeth = maxOf(3, v.roundToInt()))
-        "rack_length" -> p.copy(rackLength = v)
-        "planet_count" -> p.copy(planetCount = maxOf(2, v.roundToInt()))
-        "planet_teeth" -> p.copy(planetTeeth = maxOf(8, v.roundToInt()))
-        "ring_teeth" -> p.copy(ringTeeth = maxOf(20, v.roundToInt()))
-        "worm_starts" -> p.copy(wormStarts = maxOf(1, v.roundToInt()))
-        "wheel_teeth" -> p.copy(wheelTeeth = maxOf(10, v.roundToInt()))
-        "surface_finish" -> p.copy(surfaceFinishUm = v)
-        "load" -> p.copy(loadNm = v)
-        "speed" -> p.copy(speedRpm = v)
-        "lifetime" -> p.copy(lifetimeHours = v)
-        "safety_factor" -> p.copy(safetyFactor = v)
-        "belt_width" -> p.copy(beltWidthMm = v)
-        "belt_driver_teeth" -> p.copy(beltDriverTeeth = maxOf(8, v.roundToInt()))
-        "belt_driven_teeth" -> p.copy(beltDrivenTeeth = maxOf(8, v.roundToInt()))
-        "belt_center_distance" -> p.copy(beltCenterDistanceMm = v)
-        "belt_tension" -> p.copy(beltTensionN = v)
-        "belt_backlash" -> p.copy(beltBacklashMm = v)
-        "belt_flanges" -> p.copy(beltFlangeCount = v.roundToInt().coerceIn(0, 4))
-        "belt_idler_count" -> p.copy(beltIdlerCount = v.roundToInt().coerceIn(0, 4))
-        "stage2_module" -> p.copy(stage2Module = (if (p.unit == UnitSystem.INCH) GearCalculator.diametralPitchToModule(v) else v).coerceIn(0.2, 12.0))
-        "stage2_teeth" -> p.copy(stage2Teeth = v.roundToInt().coerceIn(3, 300))
-        "stage2_face_width" -> p.copy(stage2FaceWidth = v.coerceIn(0.1, 500.0))
-        "stage2_pressure_angle" -> p.copy(stage2PressureAngleDeg = v)
-        "stage2_phase" -> p.copy(stage2PhaseDeg = v)
-        "spacer_height" -> p.copy(spacerHeight = v)
-        "spacer_diameter" -> p.copy(spacerDiameter = v)
+        "module" -> p.copy(module = (if (p.unit == UnitSystem.INCH) GearCalculator.diametralPitchToModule(value) else value).coerceIn(0.2, 12.0))
+        "teeth" -> p.copy(teeth = value.roundToInt().coerceIn(3, 300))
+        "pressure_angle" -> p.copy(pressureAngleDeg = value)
+        "profile_shift" -> p.copy(profileShift = value)
+        "helix_angle" -> p.copy(helixAngleDeg = value)
+        "thickness" -> p.copy(thickness = value.coerceIn(0.1, 500.0))
+        "backlash" -> p.copy(backlash = value)
+        "addendum" -> p.copy(addendumCoef = value)
+        "dedendum" -> p.copy(dedendumCoef = value)
+        "hub_diameter" -> p.copy(hubDiameter = value)
+        "hub_length" -> p.copy(hubLength = value)
+        "hub_left_length" -> p.copy(hubLeftLength = value)
+        "hub_right_length" -> p.copy(hubRightLength = value)
+        "hub_chamfer" -> p.copy(hubChamfer = value)
+        "hub_fillet" -> p.copy(hubFillet = value)
+        "hub_draft_angle" -> p.copy(hubDraftAngleDeg = value)
+        "set_screw_angle" -> p.copy(setScrewAngleDeg = value)
+        "set_screw_angle2" -> p.copy(setScrewAngle2Deg = value)
+        "set_screw_depth" -> p.copy(setScrewDepth = value)
+        "set_screw_axial_offset" -> p.copy(setScrewAxialOffset = value)
+        "root_fillet_coef" -> p.copy(rootFilletCoef = value)
+        "transition_coef" -> p.copy(transitionCoef = value)
+        "tip_chamfer" -> p.copy(tipChamfer = value)
+        "tip_relief" -> p.copy(tipRelief = value)
+        "root_relief" -> p.copy(rootRelief = value)
+        "lightening_hole_diameter" -> p.copy(lighteningHoleDiameter = value)
+        "lightening_hole_pcd" -> p.copy(lighteningHolePCD = value)
+        "lightening_hole_count" -> p.copy(lighteningHoleCount = value.roundToInt().coerceIn(0, 12))
+        "spoke_count" -> p.copy(spokeCount = value.roundToInt().coerceIn(0, 12))
+        "spoke_width" -> p.copy(spokeWidth = value)
+        "set_screw_count" -> p.copy(setScrewCount = value.roundToInt().coerceIn(0, 2))
+        "index_mark_angle" -> p.copy(indexMarkAngleDeg = value)
+        "bore_diameter" -> p.copy(bore = p.bore.copy(diameter = value))
+        "dcut_offset" -> p.copy(bore = p.bore.copy(dCutFlatOffset = value))
+        "keyway_width" -> p.copy(bore = p.bore.copy(keywayWidth = value))
+        "keyway_depth" -> p.copy(bore = p.bore.copy(keywayDepth = value))
+        "hex_flats" -> p.copy(bore = p.bore.copy(hexAcrossFlats = value))
+        "square_flats" -> p.copy(bore = p.bore.copy(squareAcrossFlats = value))
+        "cone_angle" -> p.copy(coneAngleDeg = value)
+        "pitch_cone" -> p.copy(pitchConeDeg = value)
+        "mounting_distance" -> p.copy(mountingDistance = value)
+        "pinion_teeth" -> p.copy(pinionTeeth = maxOf(3, value.roundToInt()))
+        "rack_length" -> p.copy(rackLength = value)
+        "planet_count" -> p.copy(planetCount = maxOf(2, value.roundToInt()))
+        "planet_teeth" -> p.copy(planetTeeth = maxOf(8, value.roundToInt()))
+        "ring_teeth" -> p.copy(ringTeeth = maxOf(20, value.roundToInt()))
+        "worm_starts" -> p.copy(wormStarts = maxOf(1, value.roundToInt()))
+        "wheel_teeth" -> p.copy(wheelTeeth = maxOf(10, value.roundToInt()))
+        "surface_finish" -> p.copy(surfaceFinishUm = value)
+        "load" -> p.copy(loadNm = value)
+        "speed" -> p.copy(speedRpm = value)
+        "lifetime" -> p.copy(lifetimeHours = value)
+        "safety_factor" -> p.copy(safetyFactor = value)
+        "belt_width" -> p.copy(beltWidthMm = value)
+        "belt_driver_teeth" -> p.copy(beltDriverTeeth = maxOf(8, value.roundToInt()))
+        "belt_driven_teeth" -> p.copy(beltDrivenTeeth = maxOf(8, value.roundToInt()))
+        "belt_center_distance" -> p.copy(beltCenterDistanceMm = value)
+        "belt_tension" -> p.copy(beltTensionN = value)
+        "belt_backlash" -> p.copy(beltBacklashMm = value)
+        "belt_flanges" -> p.copy(beltFlangeCount = value.roundToInt().coerceIn(0, 4))
+        "belt_idler_count" -> p.copy(beltIdlerCount = value.roundToInt().coerceIn(0, 4))
+        "stage2_module" -> p.copy(stage2Module = (if (p.unit == UnitSystem.INCH) GearCalculator.diametralPitchToModule(value) else value).coerceIn(0.2, 12.0))
+        "stage2_teeth" -> p.copy(stage2Teeth = value.roundToInt().coerceIn(3, 300))
+        "stage2_face_width" -> p.copy(stage2FaceWidth = value.coerceIn(0.1, 500.0))
+        "stage2_pressure_angle" -> p.copy(stage2PressureAngleDeg = value)
+        "stage2_phase" -> p.copy(stage2PhaseDeg = value)
+        "spacer_height" -> p.copy(spacerHeight = value)
+        "spacer_diameter" -> p.copy(spacerDiameter = value)
         else -> p
         }).coerced() // cap loop-driving counts/dimensions consistently
     }
@@ -674,6 +679,218 @@ object GearSpec {
         else -> p
     }
 
+    // ---- primary measurements (single source of truth) -------------------
+
+    /** What a [Measure]'s number means, so the app can format and unit-label it. */
+    enum class MeasureKind { LENGTH, MASS }
+
+    /**
+     * One structured measurement.
+     *
+     * Lengths are already converted to the active parameter unit system ([UnitSystem])
+     * exactly as [results] presents them, and carry only a *kind*: the app supplies the
+     * localized unit suffix and the locale's decimal separator. Both the results table and
+     * the 3D measurement HUD render this type, so a number printed on the model can never
+     * disagree with the same number printed in the table.
+     */
+    data class Measure(
+        val key: String,
+        val value: Double,
+        val kind: MeasureKind,
+        val decimals: Int = 3,
+        /**
+         * Radius in **millimetres** when this measurement describes a circle centred on the
+         * model's axis, otherwise `null`.
+         *
+         * The HUD uses it to anchor a leader line on the geometry the label names. It is
+         * deliberately in millimetres and not in [value]: the overlay needs world-space
+         * geometry, while [value] may already be in inches, and converting back in the app
+         * would be a second, divergent unit path.
+         */
+        val anchorRadiusMm: Double? = null,
+        /**
+         * Height **in millimetres** at which [anchorRadiusMm] exists, or `null` for the mid-plane.
+         *
+         * The overlay projects an anchor onto the plane it names, and the mid-plane is the right
+         * answer for a straight body: a spur's tip circle is the same circle at every height. It is
+         * the wrong answer for a tapered body — a bevel's profile is generated on the back cone and
+         * scaled along the face, so its tip circle exists at the front face only, and a dot drawn in
+         * the middle of the face lands inside the material.
+         */
+        val anchorZMm: Double? = null
+    )
+
+    /**
+     * Transverse module: the module the profile is actually generated in.
+     *
+     * `m_t = m_n / cos β` (ISO 21771). Every reported diameter must use this rather than
+     * `p.module`, or a crossed-helical gear's pitch diameter would disagree with its own geometry.
+     *
+     * **Both** helical families are listed, because [GearBuilder.mesh] lofts both from
+     * `helicalParams(p)`: a screw gear is a pair of crossed helicals, so its transverse plane is
+     * where the teeth are measured just as much as a parallel helical's is. Leaving the screw gear
+     * out was not a rounding difference — at the app's own default (β = 45°, m = 1, z = 20) it
+     * reported an outer diameter of 22.0 mm on a body whose tips are 31.1 mm apart, so the HUD's
+     * leader line pointed inside the material and both exporters disagreed with the number beside
+     * them.
+     */
+    private fun transverseModule(p: GearParams): Double =
+        if (p.gearType in CROSSED_OR_HELICAL && p.helixAngleDeg != 0.0)
+            p.module / kotlin.math.cos(Math.toRadians(p.helixAngleDeg)) else p.module
+
+    /** The gear types whose displayed body is generated in the transverse plane. */
+    private val CROSSED_OR_HELICAL = setOf(GearType.HELICAL, GearType.SCREW_GEAR)
+
+    /**
+     * The tooth count the profile of [p] is generated with, for the diameters it produces.
+     *
+     * A back-cone profile is generated on the *rounded* virtual count `round(z / cos δ)` — see
+     * [GearBuilder.bevelVirtualTeeth] — and rounding is not cosmetic here: `round(20 / cos 45°)` is
+     * 28, not 28.28, which moves the built tip circle by `m·Δz·cos δ`. Reporting the unrounded count
+     * put the HUD's number, and its leader line, 0.1 mm outside the part.
+     */
+    private fun coneToothCount(p: GearParams): Int =
+        if (p.gearType == GearType.BEVEL || p.gearType == GearType.HYPOID)
+            GearBuilder.bevelVirtualTeeth(p) else p.teeth
+
+    /**
+     * Scale the back-cone profile is drawn at, for the tapered types; 1.0 for everything else.
+     *
+     * A bevel's (and hypoid's) profile is generated on the back cone with the virtual tooth count
+     * `z_v = z / cos δ` and then scaled by `cos δ` so the pitch radius stays `m·z/2` — see
+     * `GearBuilder.bevelShape`. The tip and root circles therefore sit at `m·z_v/2 · cos δ ± m·cos δ`,
+     * not `m·z/2 ± m`.
+     */
+    private fun coneScale(p: GearParams): Double =
+        if (p.gearType == GearType.BEVEL || p.gearType == GearType.HYPOID)
+            kotlin.math.cos(Math.toRadians(p.pitchConeDeg.coerceIn(5.0, 85.0))) else 1.0
+
+    /** Tip (outer) diameter in mm, honouring the transverse module, the profile shift and the cone. */
+    private fun outerDiameterMm(p: GearParams): Double {
+        val cs = coneScale(p)
+        return 2.0 * cs * GearCalculator.tipRadiusShifted(
+            transverseModule(p), coneToothCount(p), p.addendumCoef, p.profileShift
+        )
+    }
+
+    /** Pitch diameter in mm (transverse). */
+    private fun pitchDiameterMm(p: GearParams): Double = transverseModule(p) * p.teeth
+
+    /** Root diameter in mm, honouring the transverse module, the profile shift and the cone. */
+    private fun rootDiameterMm(p: GearParams): Double {
+        val cs = coneScale(p)
+        return 2.0 * cs * GearCalculator.rootRadiusShifted(
+            transverseModule(p), coneToothCount(p), p.dedendumCoef, p.profileShift
+        )
+    }
+
+    /**
+     * The primary dimensions of [p]: what the measurement HUD overlays on the model, and the
+     * shared rows of the results table.
+     *
+     * Types that are a single gear body report outer, pitch and root diameter — the three
+     * circles the HUD anchors to the model. Types whose geometry is not one gear report the
+     * dimensions that actually describe what is on screen: the rack bar length, the belt's
+     * two pulley pitch diameters and centre distance, the planetary ring pitch diameter and
+     * planet centre distance, the worm wheel pitch diameter, the ring's inner and outer
+     * diameter. Every type additionally reports its axial size, its shaft bore (when it cuts
+     * one) and its mass.
+     *
+     * The list is never empty, so a caller can lay it out without a null check.
+     */
+    fun measures(p: GearParams): List<Measure> = buildList {
+        // The meshing-constrained ring tooth count, never the user's field: the builder overrides a
+        // value that does not satisfy `Zr = Zs + 2·Zp` (with a validate() warning), so a reported
+        // ring pitch circle taken from the field would sit where the ring is not — and the HUD's
+        // leader line would point at empty space beside a ring of a different size.
+        val ringTeeth = GearCalculator.planetaryRingTeeth(p.teeth, p.planetTeeth)
+        // A back-cone profile lives on the front face; everything else is measured in the mid-plane.
+        val anchorZ = if (p.gearType == GearType.BEVEL || p.gearType == GearType.HYPOID) 0.0 else null
+        when (p.gearType) {
+            GearType.RACK -> {
+                add(Measure("result_rack_length", p.conv(GearProfiles.rackTeeth(p) * PI * p.module), MeasureKind.LENGTH))
+                // The pinion is the rack pair's other body, and it sits off the model's axis, so its
+                // pitch circle cannot be anchored — but leaving it out of the HUD entirely meant the
+                // view showed two bodies and measured one.
+                add(Measure("result_pinion_pitch_dia", p.conv(GearCalculator.pitchDiameter(p.module, p.pinionTeeth)), MeasureKind.LENGTH))
+            }
+            GearType.BELT -> {
+                val r = BeltCalculator.resolve(p.toBeltTransmission())
+                add(Measure("result_driver_pitch_dia", p.conv(r.driverPitchDia), MeasureKind.LENGTH))
+                add(Measure("result_driven_pitch_dia", p.conv(r.drivenPitchDia), MeasureKind.LENGTH))
+                add(Measure("result_center_distance", p.conv(r.centerDistanceMm), MeasureKind.LENGTH))
+            }
+            GearType.PLANETARY -> {
+                add(Measure("result_ring_pitch_dia", p.conv(GearCalculator.pitchDiameter(p.module, ringTeeth)), MeasureKind.LENGTH,
+                    anchorRadiusMm = GearCalculator.pitchDiameter(p.module, ringTeeth) / 2.0))
+                // The sun is concentric with the model's axis, so its pitch circle is the one other
+                // circle a planetary can anchor to; the planets orbit off-axis and are listed.
+                add(Measure("result_sun_pitch_dia", p.conv(GearCalculator.pitchDiameter(p.module, maxOf(5, p.teeth))), MeasureKind.LENGTH,
+                    anchorRadiusMm = GearCalculator.pitchDiameter(p.module, maxOf(5, p.teeth)) / 2.0))
+                add(Measure("result_planet_pitch_dia", p.conv(GearCalculator.pitchDiameter(p.module, maxOf(8, p.planetTeeth))), MeasureKind.LENGTH))
+                add(Measure("result_planet_center_dist", p.conv(GearCalculator.centerDistance(p.module, p.teeth, p.planetTeeth)), MeasureKind.LENGTH))
+            }
+            GearType.INTERNAL_RING -> {
+                add(Measure("result_outer_dia", p.conv(2.0 * GearBuilder.ringOuterRadius(p)), MeasureKind.LENGTH,
+                    anchorRadiusMm = GearBuilder.ringOuterRadius(p)))
+                add(Measure("result_inner_dia", p.conv(p.module * p.teeth - 2.0 * p.module), MeasureKind.LENGTH,
+                    anchorRadiusMm = (p.module * p.teeth - 2.0 * p.module) / 2.0))
+                add(Measure("result_ring_pitch_dia", p.conv(GearCalculator.pitchDiameter(p.module, p.teeth)), MeasureKind.LENGTH,
+                    anchorRadiusMm = GearCalculator.pitchDiameter(p.module, p.teeth) / 2.0))
+            }
+            GearType.WORM_PAIR -> {
+                val rWorm = GearBuilder.wormPitchRadius(p)
+                add(Measure("result_worm_pitch_dia", p.conv(2.0 * rWorm), MeasureKind.LENGTH))
+                add(Measure("result_wheel_pitch_dia", p.conv(GearCalculator.pitchDiameter(p.module, p.wheelTeeth)), MeasureKind.LENGTH,
+                    anchorRadiusMm = GearCalculator.pitchDiameter(p.module, p.wheelTeeth) / 2.0))
+                // The distance between the two axes is what the drawing actually seats: the worm is
+                // placed `rWheel + rWorm` above the wheel (see GearBuilder.assembly).
+                add(Measure("result_center_distance", p.conv(GearCalculator.pitchRadius(p.module, p.wheelTeeth) + rWorm), MeasureKind.LENGTH))
+            }
+            else -> {
+                add(Measure("result_outer_diameter", p.conv(outerDiameterMm(p)), MeasureKind.LENGTH,
+                    anchorRadiusMm = outerDiameterMm(p) / 2.0, anchorZMm = anchorZ))
+                add(Measure("result_pitch_diameter", p.conv(pitchDiameterMm(p)), MeasureKind.LENGTH,
+                    anchorRadiusMm = pitchDiameterMm(p) / 2.0, anchorZMm = anchorZ))
+                add(Measure("result_root_diameter", p.conv(rootDiameterMm(p)), MeasureKind.LENGTH,
+                    anchorRadiusMm = rootDiameterMm(p) / 2.0, anchorZMm = anchorZ))
+            }
+        }
+        // Axial size: the face width for a gear body, the belt width for a belt drive. The face
+        // width gets an anchor on the flank radius so the HUD can draw it as a dimension line
+        // along the axis; a rack bar and a belt have no such circle.
+        if (p.gearType == GearType.BELT) {
+            add(Measure("hud_belt_width", p.conv(p.beltWidthMm), MeasureKind.LENGTH))
+        } else {
+            add(Measure("hud_face_width", p.conv(p.thickness), MeasureKind.LENGTH,
+                anchorRadiusMm = faceWidthAnchorRadiusMm(p), anchorZMm = anchorZ))
+        }
+        if (p.gearType == GearType.COMPOUND) {
+            // Stage 2 has its own module and tooth count, so its pitch circle is a different circle
+            // from stage 1's — the concentric one the HUD anchors describes the first stage only.
+            add(Measure("result_stage2_pitch_dia", p.conv(p.stage2Module * p.stage2Teeth), MeasureKind.LENGTH))
+            add(Measure("result_total_height", p.conv(p.thickness + p.spacerHeight + p.stage2FaceWidth), MeasureKind.LENGTH))
+        }
+        Bore.displayDiameter(p)?.let {
+            add(Measure("hud_bore", p.conv(it), MeasureKind.LENGTH, anchorRadiusMm = it / 2.0))
+        }
+        add(Measure("result_weight", GearCalculator.weightKg(p), MeasureKind.MASS))
+    }
+
+    /**
+     * Radius the face-width dimension line is drawn at, or `null` when the type has no circle
+     * to attach it to. Placed on the flank/rim radius so the line sits outside the teeth where
+     * it stays visible from every camera angle.
+     */
+    private fun faceWidthAnchorRadiusMm(p: GearParams): Double? = when (p.gearType) {
+        GearType.RACK, GearType.BELT -> null
+        GearType.INTERNAL_RING -> GearBuilder.ringOuterRadius(p)
+        GearType.PLANETARY ->
+            GearCalculator.pitchDiameter(p.module, GearCalculator.planetaryRingTeeth(p.teeth, p.planetTeeth)) / 2.0
+        GearType.WORM_PAIR -> GearCalculator.pitchDiameter(p.module, p.wheelTeeth) / 2.0
+        else -> rootDiameterMm(p) / 2.0
+    }
+
     // ---- computed results ------------------------------------------------
     /**
      * Computed result rows. Labels are localized keys (`result_*`) resolved by the app;
@@ -689,20 +906,18 @@ object GearSpec {
         val z = p.teeth
         val unit = if (p.unit == UnitSystem.INCH) "in" else "mm"
         fun d(v: Double) = "${fmt(p.conv(v), 3)} $unit"
-        // Transverse module for helical gears (the profile is generated in the
-        // transverse plane): m_t = m_n / cos β (ISO 21771).
-        val mt = if (p.gearType == GearType.HELICAL && p.helixAngleDeg != 0.0)
-            m / Math.cos(Math.toRadians(p.helixAngleDeg)) else m
+        // The three diameters come from the same helpers [measures] uses, so the results
+        // table and the 3D measurement HUD cannot report different numbers for one gear.
         val base = when (type) {
             GearType.SPUR, GearType.HELICAL, GearType.CYCLOIDAL, GearType.FACE_GEAR, GearType.SCREW_GEAR -> listOf(
-                "result_pitch_diameter" to d(mt * z),
-                "result_outer_diameter" to d(2.0 * GearCalculator.tipRadiusShifted(mt, z, p.addendumCoef, p.profileShift)),
-                "result_root_diameter" to d(2.0 * GearCalculator.rootRadiusShifted(mt, z, p.dedendumCoef, p.profileShift)),
-                "result_base_diameter" to d(mt * z * Math.cos(Math.toRadians(p.pressureAngleDeg)))
+                "result_pitch_diameter" to d(pitchDiameterMm(p)),
+                "result_outer_diameter" to d(outerDiameterMm(p)),
+                "result_root_diameter" to d(rootDiameterMm(p)),
+                "result_base_diameter" to d(transverseModule(p) * z * Math.cos(Math.toRadians(p.pressureAngleDeg)))
             )
             GearType.BEVEL, GearType.HYPOID -> listOf(
-                "result_pitch_diameter" to d(mt * z),
-                "result_outer_diameter" to d(2.0 * GearCalculator.tipRadiusShifted(mt, z, p.addendumCoef, p.profileShift)),
+                "result_pitch_diameter" to d(pitchDiameterMm(p)),
+                "result_outer_diameter" to d(outerDiameterMm(p)),
                 "result_cone_angle" to "${fmt(p.coneAngleDeg, 2)}\u00b0"
             )
             GearType.RACK -> listOf(
@@ -711,25 +926,29 @@ object GearSpec {
                 "result_teeth_on_rack" to GearProfiles.rackTeeth(p).toString()
             )
             GearType.PLANETARY -> listOf(
-                "result_ratio_fixed_ring" to fmt(GearCalculator.planetaryRatioFixedRing(z, p.ringTeeth), 3),
+                "result_ratio_fixed_ring" to fmt(GearCalculator.planetaryRatioFixedRing(maxOf(5, z), GearCalculator.planetaryRingTeeth(z, p.planetTeeth)), 3),
                 "result_planet_center_dist" to d(GearCalculator.centerDistance(m, z, p.planetTeeth)),
-                "result_ring_pitch_dia" to d(GearCalculator.pitchDiameter(m, p.ringTeeth))
+                "result_ring_pitch_dia" to d(GearCalculator.pitchDiameter(m, GearCalculator.planetaryRingTeeth(z, p.planetTeeth))),
+                "result_sun_pitch_dia" to d(GearCalculator.pitchDiameter(m, maxOf(5, z))),
+                "result_planet_pitch_dia" to d(GearCalculator.pitchDiameter(m, maxOf(8, p.planetTeeth)))
             )
             GearType.WORM_PAIR -> listOf(
                 "result_ratio" to "${p.wheelTeeth}:${p.wormStarts}",
-                "result_wheel_pitch_dia" to d(GearCalculator.pitchDiameter(m, p.wheelTeeth))
+                "result_worm_pitch_dia" to d(2.0 * GearBuilder.wormPitchRadius(p)),
+                "result_wheel_pitch_dia" to d(GearCalculator.pitchDiameter(m, p.wheelTeeth)),
+                "result_center_distance" to d(GearCalculator.pitchRadius(m, p.wheelTeeth) + GearBuilder.wormPitchRadius(p))
             )
             GearType.INTERNAL_RING -> listOf(
                 "result_ring_pitch_dia" to d(GearCalculator.pitchDiameter(m, z)),
                 "result_inner_dia" to d(m * z - 2.0 * m),
-                "result_outer_dia" to d(m * z + 2.5 * m)
+                "result_outer_dia" to d(2.0 * GearBuilder.ringOuterRadius(p))
             )
             GearType.HARMONIC_DRIVE -> listOf(
                 "result_flexspline_teeth" to z.toString(),
                 "result_pitch_diameter" to d(GearCalculator.pitchDiameter(m, z))
             )
             GearType.COMPOUND -> listOf(
-                "result_pitch_diameter" to d(mt * z),
+                "result_pitch_diameter" to d(pitchDiameterMm(p)),
                 "result_stage2_pitch_dia" to d(p.stage2Module * p.stage2Teeth),
                 "result_ratio" to fmt(p.stage2Teeth.toDouble() / z, 3),
                 "result_total_height" to d(p.thickness + p.spacerHeight + p.stage2FaceWidth)
@@ -756,6 +975,30 @@ object GearSpec {
     }
 
     /**
+     * Result keys that stay metric in every unit system.
+     *
+     * The editor can be switched to inch (diametral pitch) and every other number follows. These
+     * three do not: mass, moment of inertia and backlash are computed in kilograms, kg·m² and
+     * millimetres, and converting them to pounds and inches is a decision nobody has made. Naming
+     * them here lets the panel label them instead of leaving the reader to wonder whether the unit
+     * was forgotten — and lets a test prove the list still refers to results that exist.
+     */
+    val METRIC_ONLY_RESULT_KEYS: Set<String> = setOf(
+        "result_weight",
+        "result_inertia",
+        "result_backlash"
+    )
+
+    /**
+     * Switches the unit system.
+     *
+     * Trivial on its own — the choice field is *derived* from the enum, so there is no second place
+     * to update. It exists so the editor never has to reach into the parameter object to change a
+     * unit, and so the tests have one name to assert against.
+     */
+    fun setUnit(p: GearParams, unit: UnitSystem): GearParams = p.copy(unit = unit)
+
+    /**
      * Validates geometric relationships that can produce NaN or degenerate geometry.
      *
      * Returns a (possibly empty) list of [GearWarning]s. The UI surfaces these as
@@ -769,13 +1012,11 @@ object GearSpec {
         }
 
         // Tooth count outside the supported range is clamped by coerced() (involute ≥ 8,
-        // cycloid ≥ 6, straight ≥ 5, max 300); surface the clamp.
+        // cycloid ≥ 6, straight ≥ 5, max 300); surface the clamp. The same floor is what the
+        // `teeth` field advertises, so this normally fires only for a value that arrived
+        // through a non-UI path.
         if (hasGearBody(p.gearType)) {
-            val minTeeth = when (p.toothProfile) {
-                ToothProfile.CYCLOID -> 6
-                ToothProfile.STRAIGHT -> 5
-                ToothProfile.INVOLUTE -> 8
-            }
+            val minTeeth = p.toothProfile.minTeeth
             if (p.teeth < minTeeth || p.teeth > 300) {
                 add(GearWarning(WARN_TEETH, detail = "$minTeeth..300"))
             }
@@ -870,16 +1111,12 @@ object GearSpec {
         }
 
         // Bore larger than the gear body cuts away the teeth entirely. Only single-gear
-        // bodies actually cut the bore; ring/worm/rack/belt do not (audit C9).
-        val cutsBore = p.gearType != GearType.RACK && p.gearType != GearType.BELT &&
-            p.gearType != GearType.INTERNAL_RING && p.gearType != GearType.WORM_PAIR
-        if (p.bore.type != BoreType.NONE && cutsBore) {
+        // bodies actually cut the bore; ring/worm/rack/belt do not (audit C9). The check is
+        // driven by [Bore.displayDiameter], the same definition the measurement rows use, so
+        // the warning and the reported bore can never describe different geometry.
+        val boreD = Bore.displayDiameter(p)
+        if (boreD != null) {
             val rootD = 2.0 * GearCalculator.rootRadiusShifted(p.module, p.teeth, p.dedendumCoef, p.profileShift)
-            val boreD = when (p.bore.type) {
-                BoreType.HEX -> p.bore.hexAcrossFlats
-                BoreType.SQUARE -> p.bore.squareAcrossFlats
-                else -> p.bore.diameter
-            }
             // Keep a printable wall of material between the bore and the tooth root
             // (twice the minimum wall thickness).
             val minWall = max(0.6, 0.4 * p.module)
@@ -941,6 +1178,9 @@ object GearSpec {
         val hubR = GearCalculator.effectiveHubRight(p)
         val hasHub = hubL > 0.0 || hubR > 0.0
         if (hasHub) {
+            // Deliberately the declared bore and not [Bore.displayDiameter]: the hub is a
+            // separate solid from the tooth body, so its wall is checked against the bore
+            // the user declared even for types whose tooth body cuts none (audit C9).
             val boreD = when (p.bore.type) {
                 BoreType.HEX -> p.bore.hexAcrossFlats
                 BoreType.SQUARE -> p.bore.squareAcrossFlats
@@ -951,8 +1191,8 @@ object GearSpec {
                 add(GearWarning(WARN_HUB_WALL, severity = GearSeverity.ERROR))
             }
             // Hard error: chamfer larger than the available material.
-            val maxChamfer = minOf(p.hubDiameter / 2.0, hubL, hubR)
-            if (p.hubChamfer > maxChamfer) {
+            val maxChamfer = HubBuilder.chamferLimit(p)
+            if (!p.hubChamfer.isFinite() || p.hubChamfer < 0.0 || p.hubChamfer > maxChamfer) {
                 add(GearWarning(WARN_HUB_CHAMFER, severity = GearSeverity.ERROR))
             }
             // Warning: hub covers the tooth root (cuts the teeth).

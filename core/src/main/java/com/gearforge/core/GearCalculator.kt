@@ -59,6 +59,21 @@ object GearCalculator {
     // ---- Planetary (epicyclic) ----
     fun ringTeeth(sunTeeth: Int, planetTeeth: Int) = sunTeeth + 2 * planetTeeth
 
+    /**
+     * Ring tooth count the builder and the kinematics use for a planetary, clamps included.
+     *
+     * `Zr = Zs + 2·Zp` is a meshing constraint, not a preference: the builder *overrides* a
+     * mismatched field value (with a `validate()` warning), so the ring on screen has this many
+     * teeth whatever the user typed. [GearSpec] therefore reports the ring's pitch diameter from
+     * this number — reporting the field put the HUD's leader line on a circle that belonged to no
+     * ring in the scene.
+     *
+     * The floors are part of the rule rather than of any one caller: fewer than 5 sun teeth and 8
+     * planet teeth produce degenerate flanks, and the builder lifts them before meshing.
+     */
+    fun planetaryRingTeeth(sunTeeth: Int, planetTeeth: Int): Int =
+        ringTeeth(maxOf(5, sunTeeth), maxOf(8, planetTeeth))
+
     /** Reduction ratio with a fixed ring, sun input, planet-carrier output. */
     fun planetaryRatioFixedRing(sunTeeth: Int, ringTeeth: Int) =
         (ringTeeth + sunTeeth).toDouble() / sunTeeth.toDouble()

@@ -26,22 +26,46 @@ data class GearAssembly(val meshes: List<Mesh>, val offsets: List<Vec2>)
 /** High-level entry point that turns [GearParams] into meshes. */
 object GearBuilder {
 
+    /**
+     * The 2D profile the body is built from: the same contour [mesh] extrudes.
+     *
+     * Two families used to get a different answer here than in [mesh], which is a defect rather
+     * than a simplification — the SVG and DXF exports, the scrub preview and the outline a tap is
+     * resolved against all read this function, so they described a body the viewport never showed:
+     *
+     *  - **Crossed-helical (screw) gears** were generated in the normal module while [mesh] lofted
+     *    them in the transverse one, so the 2D profile was `1/cos β` smaller than the solid.
+     *  - **Internal rings** were returned as an *external* gear, while [mesh] extruded a rim whose
+     *    inner boundary is the tooth profile.
+     */
     fun shape(p: GearParams): PlanarShape = when (p.gearType) {
         GearType.RACK -> PlanarShape(GearProfiles.rackOutline(p), emptyList())
         GearType.BELT -> BeltBuilder.beltPath2D(p.toBeltTransmission())
+        GearType.INTERNAL_RING -> ringShape(p)
         else -> {
+            val q = profileParams(p)
             // Spokes and lightening holes both occupy the annulus between the bore
             // and the rim; when both are enabled the circular holes can intersect the
             // spoke wedges and break the hole triangulation. Spokes win (they define
             // the structural web), lightening holes are dropped in that case (audit L3).
-            val spokes = Bore.spokeWedgeHoles(p)
-            val lightening = if (spokes.isNotEmpty()) emptyList() else Bore.lighteningHoles(p)
+            val spokes = Bore.spokeWedgeHoles(q)
+            val lightening = if (spokes.isNotEmpty()) emptyList() else Bore.lighteningHoles(q)
             PlanarShape(
-                GearProfiles.externalOutline(p),
-                Bore.holes(p) + lightening + spokes + Bore.indexMarkHoles(p)
+                GearProfiles.externalOutline(q),
+                Bore.holes(q) + lightening + spokes + Bore.indexMarkHoles(q)
             )
         }
     }
+
+    /**
+     * The parameters the tooth profile is generated in.
+     *
+     * For the helical families the user-facing module is the *normal* one, so the profile in the
+     * transverse plane needs `m_t = m_n / cos β`. [shape] and [mesh] both go through here, so the
+     * conversion has one definition and can neither be applied twice nor forgotten.
+     */
+    private fun profileParams(p: GearParams): GearParams =
+        if (p.gearType == GearType.HELICAL || p.gearType == GearType.SCREW_GEAR) helicalParams(p) else p
 
     fun mesh(p: GearParams): Mesh {
         // Defensive clamp so out-of-range parameters can never produce NaN/degenerate
@@ -50,7 +74,7 @@ object GearBuilder {
         return when (p.gearType) {
         GearType.RACK -> MeshBuilder.extrude(PlanarShape(GearProfiles.rackOutline(p)), p.thickness)
         GearType.HELICAL -> Loft.loft(
-            shape(helicalParams(p)), p.thickness,
+            shape(p), p.thickness,
             twistRad = helicalTwist(p),
             scaleStart = 1.0, scaleEnd = 1.0, slices = sliceCount(p)
         )
@@ -63,7 +87,7 @@ object GearBuilder {
         GearType.WORM_PAIR -> wheelMesh(p)
         GearType.COMPOUND -> CompoundGearBuilder.mesh(p)
         GearType.SCREW_GEAR -> Loft.loft(
-            shape(helicalParams(p)), p.thickness,
+            shape(p), p.thickness,
             twistRad = helicalTwist(p),   // audit C7: honour the user's helix_angle
             scaleStart = 1.0, scaleEnd = 1.0, slices = sliceCount(p)
         )
@@ -149,6 +173,26 @@ object GearBuilder {
         }
     }
 
+    /**
+     * Localization keys for the bodies of [assembly], in the same order.
+     *
+     * The viewport legend names each body, and it can only do that if something knows what the
+     * bodies *are*. That knowledge belongs next to the code that decides their order — a legend is
+     * positional, so a mismatch would label the ring as the sun. `AssemblyBodyKeysTest` checks the
+     * two lists against each other for every gear type so the two cannot drift apart.
+     */
+    fun bodyKeys(p: GearParams): List<String> {
+        val q = p.coerced()
+        return when (q.gearType) {
+            GearType.RACK -> listOf("body_rack", "body_pinion")
+            GearType.PLANETARY -> listOf("body_sun", "body_ring") +
+                List(q.planetCount.coerceIn(2, 6)) { "body_planet" }
+            GearType.WORM_PAIR -> listOf("body_worm", "body_wheel")
+            GearType.BELT -> listOf("body_belt", "body_driver", "body_driven")
+            else -> listOf("body_gear") + if (HubBuilder.hasHub(q)) listOf("body_hub") else emptyList()
+        }
+    }
+
     /** Merges an assembly into one mesh with placement offsets applied (for single-file export). */
     fun merged(p: GearParams): Mesh {
         val a = assembly(p)
@@ -169,8 +213,15 @@ object GearBuilder {
     /** Worm tooth count: the worm is built as a helical spline with 4 teeth per start. */
     private fun wormTeeth(p: GearParams): Int = max(4, p.wormStarts * 4)
 
-    /** Worm pitch radius used to seat the worm tangent to the wheel and to size the throat arc. */
-    private fun wormPitchRadius(p: GearParams): Double =
+    /**
+     * Worm pitch radius: the circle the worm is seated on, and the throat arc's radius.
+     *
+     * Public because it is a reported dimension: `GearSpec` prints the worm's pitch diameter and
+     * the pair's centre distance (`rWheel + rWorm`, the distance `assembly` actually places them
+     * at) from this number, and the rule that a worm is modelled with four threads per start must
+     * not have a second home.
+     */
+    fun wormPitchRadius(p: GearParams): Double =
         GearCalculator.pitchRadius(p.module, wormTeeth(p))
 
     private fun wormMesh(p: GearParams): Mesh {
@@ -220,21 +271,45 @@ object GearBuilder {
         return Mesh(mesh.vertices.map { Vec3(it.x, it.y, it.z - halfT) }, mesh.triangles)
     }
 
-    fun ringMesh(p: GearParams): Mesh {
-        val p = p.coerced()
-        val rp = p.module * p.teeth / 2.0
-        val rRoot = rp + 1.25 * p.module
-        val rIn = rp - p.module
+    /** Structural rim thickness beyond the tooth root, in millimetres. */
+    private fun ringRimMm(p: GearParams): Double = max(2.0, 2.0 * p.module)
+
+    /**
+     * The internal ring's outer radius: the tooth root circle plus the structural rim.
+     *
+     * Public because it is a reported dimension. `GearSpec` used to print `m·z/2 + 1.25·m` — the
+     * *root* circle — as the ring's "Outer dia.", which is where the teeth end and the rim begins,
+     * on a part whose outer edge is `max(2 mm, 2·m)` further out. The HUD's anchor sat on the same
+     * inner circle, so the label pointed at a boundary that is not the part's edge.
+     */
+    fun ringOuterRadius(p: GearParams): Double {
+        val q = p.coerced()
+        return q.module * q.teeth / 2.0 + 1.25 * q.module + ringRimMm(q)
+    }
+
+    /**
+     * The internal ring's 2D shape: a solid rim whose inner boundary is the tooth profile.
+     *
+     * Shared with [shape], because a ring's DXF and SVG export has to be a ring. It used to be an
+     * external gear profile, so the 2D files described a different part from the model.
+     */
+    private fun ringShape(p: GearParams): PlanarShape {
+        val q = p.coerced()
+        val rp = q.module * q.teeth / 2.0
+        val rRoot = rp + 1.25 * q.module
+        val rIn = rp - q.module
         require(rIn < rRoot) { "Ring inner radius ($rIn) must be < root radius ($rRoot)" }
         // A solid rim beyond the tooth root, with the toothed inner boundary as a
         // hole. Proper triangulation (hole bridging + vertex dedupe) replaces the
         // previous manual radial pairing that produced zero rim and skewed walls
         // (audit M4).
-        val rim = max(2.0, 2.0 * p.module)
-        val outer = circle(rRoot + rim, 96)
-        val toothHole = GearProfiles.internalRingOutline(p)
-        return MeshBuilder.extrude(PlanarShape(outer, listOf(toothHole)), p.thickness)
+        val outer = circle(ringOuterRadius(q), 96)
+        val toothHole = GearProfiles.internalRingOutline(q)
+        return PlanarShape(outer, listOf(toothHole))
     }
+
+    fun ringMesh(p: GearParams): Mesh =
+        MeshBuilder.extrude(ringShape(p), p.coerced().thickness)
 
     fun planetary(p: GearParams): PlanetaryAssembly {
         val p = p.coerced()
@@ -243,7 +318,8 @@ object GearBuilder {
         val planetTeeth = max(8, p.planetTeeth)
         // Zr = Zs + 2·Zp is a hard meshing constraint; the ring must have exactly this
         // many teeth. A mismatched user value is overridden (with a validate() warning).
-        val ringTeeth = sunTeeth + 2 * planetTeeth
+        // One definition, shared with the kinematics and with what `GearSpec` reports.
+        val ringTeeth = GearCalculator.planetaryRingTeeth(p.teeth, p.planetTeeth)
         val planetCount = p.planetCount.coerceIn(2, 6)
 
         val sun = mesh(p.copy(gearType = GearType.SPUR, teeth = sunTeeth))
@@ -279,25 +355,87 @@ object GearBuilder {
      * in the 3D viewport. It is extruded a little beyond the gear faces so the
      * renderer can draw it as a distinct-colour overlay without changing the
      * underlying gear geometry.
+     *
+     * The wedge is placed from the **generated outline**, not from the nominal tooth phase. The
+     * nominal phase (`2π·i/n`) is the angle tooth 0 happens to be built at; it is not a property of
+     * the tooth. A per-tooth asymmetric pressure angle moves the tip centre sideways, and a profile
+     * shift or a modified addendum coefficient moves it radially — so a nominal wedge could sit
+     * beside the tooth it claims to mark, while [ToothPick] refuses to name a tooth it cannot read
+     * back from the outline. The tap that set `toothOverrides` and the wedge that shows it would
+     * then disagree about which tooth is meant, and the marker is the only feedback there is.
+     *
+     * Radii come from the same outline, so a shifted or shifted-addendum tooth is marked out to its
+     * real tip rather than to the unmodified one. Crossed-helical and helical bodies are generated
+     * from the transverse module (see [mesh]), so the wedge is measured in the same plane.
      */
     fun toothHighlightMesh(p: GearParams, toothIndex: Int): Mesh {
-        val n = p.teeth
+        val q = p.coerced()
+        val n = q.teeth
         val idx = ((toothIndex % n) + n) % n
-        val rTip = GearCalculator.outerRadius(p.module, n) + 0.5
-        val rRoot = GearCalculator.rootRadius(p.module, n).coerceAtLeast(0.4) - 0.4
-        val center = 2.0 * PI * idx / n
-        val half = PI / n * 0.72
-        val a1 = center - half
-        val a2 = center + half
+        val pitch = 2.0 * PI / n
+        val centre = ToothPick.toothCentreAngles(q)?.getOrNull(idx) ?: (pitch * idx)
+        val outline = highlightOutline(q)
+        var rTip = -1.0
+        var rRoot = Double.MAX_VALUE
+        for (v in outline) {
+            val r = sqrt(v.x * v.x + v.y * v.y)
+            if (angleBetween(v.x, v.y, centre) <= pitch / 2.0) {
+                if (r > rTip) rTip = r
+                if (r < rRoot) rRoot = r
+            }
+        }
+        // A type whose outline is not one gear (a belt path, a profile too coarse to resolve teeth)
+        // falls back to the analytic radii rather than to an empty marker.
+        val module = profileParams(q).module
+        if (rTip <= 0.0) rTip = GearCalculator.outerRadius(module, n)
+        if (rRoot >= rTip || rRoot == Double.MAX_VALUE) rRoot = GearCalculator.rootRadius(module, n)
+
+        val half = pitch * 0.36
+        val a1 = centre - half
+        val a2 = centre + half
         val poly = listOf(
-            Vec2.polar(rRoot, a1),
-            Vec2.polar(rTip, a1),
-            Vec2.polar(rTip, a2),
-            Vec2.polar(rRoot, a2)
+            Vec2.polar((rRoot - 0.4).coerceAtLeast(0.4), a1),
+            Vec2.polar(rTip + 0.5, a1),
+            Vec2.polar(rTip + 0.5, a2),
+            Vec2.polar((rRoot - 0.4).coerceAtLeast(0.4), a2)
         )
         val t = p.thickness + 0.6
         val m = MeshBuilder.extrude(PlanarShape(poly, emptyList()), t)
         return Mesh(m.vertices.map { Vec3(it.x, it.y, it.z - 0.3) }, m.triangles)
+    }
+
+    /** Smallest angle between a direction and [angle], in radians. */
+    private fun angleBetween(x: Double, y: Double, angle: Double): Double {
+        val twoPi = 2.0 * PI
+        val d = Math.abs(Math.atan2(y, x) - angle) % twoPi
+        return if (d > PI) twoPi - d else d
+    }
+
+    /**
+     * Single-entry memo for the outline [toothHighlightMesh] measures against.
+     *
+     * One composition pass asks for one wedge per overridden tooth, and every one of them needs the
+     * same outline. Generating it per marker would triangulate the whole profile N times on the
+     * composition thread, which is exactly the kind of work the 200-tooth types cannot afford.
+     * `GearParams` is a data class, so the key is structural: a parameter change misses and the
+     * stale entry is replaced rather than kept.
+     */
+    private var outlineMemoKey: GearParams? = null
+    private var outlineMemo: List<Vec2> = emptyList()
+
+    private fun highlightOutline(p: GearParams): List<Vec2> {
+        outlineMemoKey?.let { if (it == p) return outlineMemo }
+        val outline = if (p.gearType == GearType.INTERNAL_RING) {
+            // A ring's teeth are its *hole*. `shape` answers with the rim disc, whose only outline is
+            // a constant-radius circle, so a marker measured against it would be a blob on the rim
+            // rather than on the tooth the override names.
+            runCatching { GearProfiles.internalRingOutline(p) }.getOrNull().orEmpty()
+        } else {
+            runCatching { shape(p).outer }.getOrNull().orEmpty()
+        }
+        outlineMemoKey = p
+        outlineMemo = outline
+        return outline
     }
 
     fun circle(radius: Double, segments: Int = 96): List<Vec2> =
@@ -323,6 +461,19 @@ object GearBuilder {
     }
 
     /**
+     * Virtual tooth count of a back-cone profile: `round(z / cos δ)`, floored at 5.
+     *
+     * The spur profile that is correct on a cone has `z_v = z / cos δ` teeth, and that count is
+     * *rounded* because a profile needs a whole number. Public because it is also a reported
+     * quantity: `GearSpec` has to report the diameters of the rounded profile, or the number beside
+     * the model disagrees with the mesh by `m·Δz·cos δ` — 0.1 mm on a 20-tooth bevel at δ = 45°.
+     */
+    fun bevelVirtualTeeth(p: GearParams): Int {
+        val delta = Math.toRadians(p.pitchConeDeg.coerceIn(5.0, 85.0))
+        return max(5, (p.teeth / cos(delta)).roundToInt())
+    }
+
+    /**
      * Bevel/hypoid tooth profile on the back cone: the tooth count is the virtual
      * count z_v = z/cos δ (the spur profile that is correct for the cone), scaled by
      * cos δ so the pitch radius stays at the gear's own pitch radius. The bore and
@@ -330,7 +481,7 @@ object GearBuilder {
      */
     private fun bevelShape(p: GearParams): PlanarShape {
         val delta = Math.toRadians(p.pitchConeDeg.coerceIn(5.0, 85.0))
-        val zv = max(5, (p.teeth / cos(delta)).roundToInt())
+        val zv = bevelVirtualTeeth(p)
         val cs = cos(delta)
         val back = GearProfiles.externalOutline(p.copy(teeth = zv))
         val outer = back.map { Vec2(it.x * cs, it.y * cs) }

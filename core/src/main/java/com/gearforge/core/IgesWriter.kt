@@ -11,101 +11,138 @@ import java.util.Locale
 object IgesWriter {
 
     private const val WIDTH = 72
+    private const val SEQ_WIDTH = 7
+
+    /**
+     * Appends one IGES record: 72 data columns, the section letter in column 73, and the
+     * sequence number right-justified in columns 74-80.
+     *
+     * The 80-column length is not cosmetic. `padEnd(WIDTH)` does not truncate, so any data
+     * longer than 72 characters used to produce an overlong record - a file CAD programs
+     * reject without a readable error. Measured before the fix: 16 834 records longer than
+     * 80 columns in an exported gear.
+     */
+    private fun record(sb: StringBuilder, data: String, section: Char, seq: Int) {
+        require(data.length <= WIDTH) { "IGES record data is ${data.length} columns, max is $WIDTH" }
+        sb.append(data.padEnd(WIDTH))
+        sb.append(section)
+        sb.append(String.format(Locale.US, "%${SEQ_WIDTH}d", seq))
+        sb.append('\n')
+    }
+
+    /** One directory-entry field: 8 columns, right-justified. Nine of them make one record. */
+    private fun deField(value: Int): String = String.format(Locale.US, "%8d", value)
+
+    /**
+     * Folds free-form parameter data into 72-column records. IGES continues a parameter record
+     * across as many records as it needs - the Directory Entry stores the sequence number of the
+     * first one and the count. Breaks after a comma where possible so the split never lands
+     * inside a number.
+     */
+    private fun foldParameters(data: String): List<String> {
+        if (data.length <= WIDTH) return listOf(data)
+        val out = ArrayList<String>()
+        var rest = data
+        while (rest.length > WIDTH) {
+            var cut = rest.lastIndexOf(',', WIDTH - 1)
+            if (cut <= 0) cut = WIDTH - 1
+            out.add(rest.substring(0, cut + 1))
+            rest = rest.substring(cut + 1)
+        }
+        if (rest.isNotEmpty()) out.add(rest)
+        return out
+    }
 
     fun write(mesh: Mesh): String {
         val sb = StringBuilder(65536)
-        val entities = ArrayList<String>()  // parameter-data records
 
-        // One 106 entity per triangle (4 points: a, b, c, a).
-        val dirEntries = ArrayList<Pair<Int, String>>()
+        // One 106 entity per triangle (4 points: a, b, c, a), each folded to 72-column records.
+        val paramRecords = ArrayList<List<String>>(mesh.triangles.size)
         for (t in mesh.triangles) {
             val a = mesh.vertices[t[0]]
             val b = mesh.vertices[t[1]]
             val c = mesh.vertices[t[2]]
             val pts = doubleArrayOf(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z)
-            entities.add(buildString {
+            val data = buildString {
                 append("106,1,").append(4).append(',')
                 for (i in pts.indices) {
                     if (i > 0) append(',')
                     append(f(pts[i]))
                 }
                 append(';')
-            })
+            }
+            paramRecords.add(foldParameters(data))
         }
 
-        // ---- Start section ----
-        sb.append("Gear Forge IGES export".padEnd(WIDTH)).append("S      1\n")
-
-        // ---- Global section ----
         val globals = listOf(
             "1H,,1H;,7Hgear.igs,4HIGES,0.1,3.2768,13,0.002,300.0,",
             "1.0,1.0,8HGearForge,0.0,0.0254,8HGearForge,8H1.0,"
         )
-        globals.forEachIndexed { i, g ->
-            sb.append(g.padEnd(WIDTH)).append("G      ").append(i + 1).append('\n')
+
+        val entityCount = paramRecords.size
+        val dirRecordCount = 2 * entityCount
+        val paramRecordCount = paramRecords.sumOf { it.size }
+
+        // ---- Start section ----
+        record(sb, "GearForge IGES export", 'S', 1)
+
+        // ---- Global section ----
+        globals.forEachIndexed { i, g -> record(sb, g, 'G', i + 1) }
+
+        // Sequence numbers run contiguously through the parameter section; every entity
+        // remembers the number of its first record for the Directory Entry pointer.
+        val pdFirst = IntArray(entityCount)
+        var pdSeq = 1
+        for (i in 0 until entityCount) {
+            pdFirst[i] = pdSeq
+            pdSeq += paramRecords[i].size
         }
 
-        // ---- Directory entries ----
-        var pdStart = 1 // 1-based line index of first parameter-data line
-        val dirLines = ArrayList<String>()
-        // compute parameter data line count (each entity is one line here)
-        // We'll lay out directory first, then parameter data; compute pdStart after directory.
-        // Simpler: build directory strings with placeholder pd pointers, then fix up.
-        val pdPointers = IntArray(entities.size)
-        // total directory lines = 2 * entities.size; parameter data starts after that + global/start lines.
-        // We use a running line counter.
-        var line = 1 + 1 + globals.size // start(1) + global lines
-        line += 2 * entities.size        // directory entries
-        for (i in entities.indices) {
-            pdPointers[i] = line
-            line += 1 // each 106 is one line (assuming short)
+        // ---- Directory entries: odd record, then even record, numbered 1..2n ----
+        for (i in 0 until entityCount) {
+            val odd = buildString {
+                append(deField(106))              // entity type
+                append(deField(pdFirst[i]))       // parameter data pointer
+                append(deField(1))                // structure
+                append(deField(1))                // line font
+                append(deField(1))                // level
+                append(deField(1))                // view
+                append(deField(0))                // transformation matrix = none
+                append(deField(0))                // label display associativity
+                append(deField(0))                // status number
+            }
+            record(sb, odd, 'D', 2 * i + 1)
+            val even = buildString {
+                append(deField(106))                   // entity type
+                append(deField(1))                     // line weight
+                append(deField(1))                     // colour
+                append(deField(paramRecords[i].size))  // parameter LINE COUNT, not a pointer
+                append(deField(1))                     // form number
+                append(deField(0))                     // reserved
+                append(deField(0))                     // reserved
+                append(deField(1))                     // entity label
+                append(deField(0))                     // entity subscript
+            }
+            record(sb, even, 'D', 2 * i + 2)
         }
-        // Recompute properly below by emitting directory then parameter data with known layout.
-
-        sb.setLength(0)
-        // Rebuild with a two-pass line index.
-        sb.append("Gear Forge IGES export".padEnd(WIDTH)).append("S      1\n")
-        globals.forEachIndexed { i, g ->
-            sb.append(g.padEnd(WIDTH)).append("G      ").append(i + 1).append('\n')
-        }
-        val dStart = 1 + 1 + globals.size + 1 // first directory line number (1-based)
-        val pStart = dStart + 2 * entities.size
-        for (i in entities.indices) {
-            val de1 = buildString {
-                append("     106").append("        ").append("1")  // entity type + param count
-                append("        ").append("1")                        // form number
-                append("        ").append("1")                        // structure 0
-                append("        ").append("1")                        // line font
-                append("        ").append("1")                        // level
-                append("        ").append("1")                        // view
-                append("        ").append("0")                        // transform
-                append("        ").append("0")                        // label assoc
-                append("        ").append("0")                        // status
-            }.padEnd(WIDTH) + "D${dStart + 2 * i}"
-            val de2 = buildString {
-                append("     106").append("        ").append("0")     // entity type + 0
-                append("        ").append("1")                        // line weight
-                append("        ").append("1")                        // color
-                append("        ").append(pStart + i)                 // parameter data pointer
-                append("        ").append("0")                        // form
-                append("        ").append("0")                        // reserved
-                append("        ").append("0")                        // reserved
-                append("        ").append("1")                        // entity label
-                append("        ").append("0")                        // entity subscript
-            }.padEnd(WIDTH) + "D${dStart + 2 * i + 1}"
-            dirLines.add(de1)
-            dirLines.add(de2)
-        }
-        dirLines.forEach { sb.append(it).append('\n') }
 
         // ---- Parameter data ----
-        for (i in entities.indices) {
-            sb.append(entities[i].padEnd(WIDTH)).append("P").append(pStart + i).append('\n')
+        var p = 1
+        for (i in 0 until entityCount) {
+            for (r in paramRecords[i]) {
+                record(sb, r, 'P', p)
+                p++
+            }
         }
 
-        // ---- Terminate ----
-        val term = String.format(Locale.US, "S%7dG%7dD%7dP%7d", 1, globals.size, 2 * entities.size, entities.size)
-        sb.append(term.padEnd(WIDTH)).append("T      1\n")
+        // ---- Terminate: the record count of each section ----
+        val term = String.format(
+            Locale.US,
+            "S%7dG%7dD%7dP%7d",
+            1, globals.size, dirRecordCount, paramRecordCount
+        )
+        record(sb, term, 'T', 1)
+
         return sb.toString()
     }
 

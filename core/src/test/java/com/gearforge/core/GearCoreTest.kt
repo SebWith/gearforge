@@ -198,6 +198,140 @@ class GearCoreTest {
     // ---- file-format roundtrips (point 5) ---------------------------------
 
     @Test
+    fun stepReferencesAreNumericResolvedAndDeterministic() {
+        val mesh = GearBuilder.mesh(spur().copy(precision = PrecisionLevel.HOBBY))
+        val text = StepWriter.write(mesh)
+        assertTrue("every STEP reference must be an integer", !Regex("#(?![0-9]+)").containsMatchIn(text))
+        val definitions = Regex("(?m)^#([0-9]+)=").findAll(text).map { it.groupValues[1] }.toList()
+        val ids = definitions.toSet()
+        assertEquals("entity IDs must be unique", definitions.size, ids.size)
+        assertTrue("all references must resolve", Regex("#([0-9]+)").findAll(text).all { it.groupValues[1] in ids })
+        assertEquals("repeated exports must be byte-identical", text, StepWriter.write(mesh))
+    }
+
+    private fun stepTestMesh() = Mesh(
+        listOf(Vec3(0.0, 0.0, 0.0), Vec3(2.0, 0.0, 0.0), Vec3(0.0, 3.0, 0.0), Vec3(0.0, 0.0, 4.0)),
+        listOf(intArrayOf(0, 2, 1), intArrayOf(0, 1, 3), intArrayOf(0, 3, 2), intArrayOf(1, 2, 3))
+    )
+
+    private fun stepEntities(mesh: Mesh): Map<Int, String> =
+        Regex("(?m)^#([0-9]+)=(.*);$").findAll(StepWriter.write(mesh))
+            .associate { it.groupValues[1].toInt() to it.groupValues[2] }
+
+    private fun stepRefs(entity: String): List<Int> =
+        Regex("#([0-9]+)").findAll(entity).map { it.groupValues[1].toInt() }.toList()
+
+    private fun stepTuple(entity: String): Vec3 {
+        val match = Regex("^[A-Z_]+\\('',\\(([^,]+),([^,]+),([^,]+)\\)\\)$").matchEntire(entity)
+        assertTrue("expected a 3D real tuple: $entity", match != null)
+        val values = match!!.groupValues.drop(1)
+        assertTrue("STEP REALs need a decimal point", values.all { '.' in it && it.toDouble().isFinite() })
+        return Vec3(values[0].toDouble(), values[1].toDouble(), values[2].toDouble())
+    }
+
+    @Test
+    fun stepSchemaUsesTypedProductAndShapeLinks() {
+        val entities = stepEntities(stepTestMesh())
+        fun only(type: String) = entities.values.single { it.startsWith("$type(") }
+        fun target(entity: String, index: Int = 0) = entities.getValue(stepRefs(entity)[index])
+        val context = target(only("PRODUCT"))
+        assertTrue(context.startsWith("PRODUCT_CONTEXT("))
+        assertTrue(target(context).startsWith("APPLICATION_CONTEXT("))
+        val definition = target(only("SHAPE_DEFINITION_REPRESENTATION"))
+        assertTrue(definition.startsWith("PRODUCT_DEFINITION_SHAPE("))
+        assertTrue(target(definition).startsWith("PRODUCT_DEFINITION("))
+        val representation = target(only("SHAPE_DEFINITION_REPRESENTATION"), 1)
+        assertTrue(representation.startsWith("ADVANCED_BREP_SHAPE_REPRESENTATION("))
+        assertTrue(target(representation).startsWith("MANIFOLD_SOLID_BREP("))
+        assertTrue(target(representation, 1).contains("GEOMETRIC_REPRESENTATION_CONTEXT(3)"))
+        assertTrue(entities.values.any { it == "(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))" })
+        assertTrue(entities.values.none { it.startsWith("SHAPE_REPRESENTATION_RELATIONSHIP(") })
+    }
+
+    @Test
+    fun stepDirectionsAndVectorsDescribeTheTrianglePlanes() {
+        val mesh = stepTestMesh()
+        val entities = stepEntities(mesh)
+        val points = entities.filterValues { it.startsWith("CARTESIAN_POINT(") }.mapValues { stepTuple(it.value) }
+        val directions = entities.filterValues { it.startsWith("DIRECTION(") }.mapValues { stepTuple(it.value) }
+        assertTrue(directions.isNotEmpty())
+        directions.values.forEach { assertEquals("unit direction", 1.0, it.length(), 1e-7) }
+        for (edge in entities.values.filter { it.startsWith("EDGE_CURVE(") }) {
+            val edgeRefs = stepRefs(edge)
+            val start = points.getValue(stepRefs(entities.getValue(edgeRefs[0])).single())
+            val end = points.getValue(stepRefs(entities.getValue(edgeRefs[1])).single())
+            val line = entities.getValue(edgeRefs[2])
+            assertTrue(line.startsWith("LINE("))
+            assertEquals(start, points.getValue(stepRefs(line)[0]))
+            val vector = entities.getValue(stepRefs(line)[1])
+            val match = Regex("VECTOR\\('',#([0-9]+),([^)]+)\\)").matchEntire(vector)
+            assertTrue("VECTOR needs direction reference and magnitude: $vector", match != null)
+            val magnitude = match!!.groupValues[2].toDouble()
+            assertTrue(magnitude > 0.0 && magnitude.isFinite())
+            val delta = directions.getValue(match.groupValues[1].toInt()) * magnitude
+            assertEquals(0.0, delta.dist(end - start), 1e-7)
+        }
+        val placements = entities.values.filter { it.startsWith("AXIS2_PLACEMENT_3D(") }
+        assertEquals(mesh.triangles.size, placements.size)
+        placements.zip(mesh.triangles).forEach { (placement, triangle) ->
+            val refs = stepRefs(placement)
+            val normal = directions.getValue(refs[1])
+            val reference = directions.getValue(refs[2])
+            val expected = MeshOps.faceNormal(mesh.vertices[triangle[0]], mesh.vertices[triangle[1]], mesh.vertices[triangle[2]])
+            assertEquals(mesh.vertices[triangle[0]], points.getValue(refs[0]))
+            assertEquals(0.0, normal.dist(expected), 1e-7)
+            assertEquals("reference direction must be in the face plane", 0.0,
+                normal.x * reference.x + normal.y * reference.y + normal.z * reference.z, 1e-7)
+        }
+    }
+
+    @Test
+    fun stepSharedEdgesCloseLoopsWithOppositeOrientations() {
+        val mesh = stepTestMesh()
+        val entities = stepEntities(mesh)
+        val vertices = entities.filterValues { it.startsWith("VERTEX_POINT(") }.keys.toList()
+        val loops = entities.values.filter { it.startsWith("EDGE_LOOP(") }
+        val uses = mutableMapOf<Int, MutableList<Boolean>>()
+        assertEquals(mesh.triangles.size, loops.size)
+        loops.zip(mesh.triangles).forEach { (loop, triangle) ->
+            val boundary = stepRefs(loop).map { orientedId ->
+                val oriented = entities.getValue(orientedId)
+                assertTrue(oriented.startsWith("ORIENTED_EDGE('',*,*,#"))
+                val edgeId = stepRefs(oriented).single()
+                val forward = oriented.endsWith(",.T.)")
+                assertTrue(forward || oriented.endsWith(",.F.)"))
+                uses.getOrPut(edgeId) { mutableListOf() }.add(forward)
+                val refs = stepRefs(entities.getValue(edgeId))
+                if (forward) refs[0] to refs[1] else refs[1] to refs[0]
+            }
+            assertEquals(3, boundary.size)
+            boundary.forEachIndexed { index, (start, end) ->
+                assertEquals(vertices[triangle[index]], start)
+                assertEquals(vertices[triangle[(index + 1) % 3]], end)
+                assertEquals("loop must be connected", end, boundary[(index + 1) % 3].first)
+            }
+        }
+        assertEquals(6, uses.size)
+        uses.values.forEach { assertEquals(listOf(false, true), it.sorted()) }
+    }
+
+    @Test
+    fun stepDisconnectedComponentsUseSeparateClosedShells() {
+        val first = stepTestMesh()
+        val second = Mesh(first.vertices.map { it + Vec3(10.0, 0.0, 0.0) }, first.triangles)
+        val entities = stepEntities(MeshOps.merge(listOf(first, second)))
+        val shells = entities.filterValues { it.startsWith("CLOSED_SHELL(") }
+        val solids = entities.filterValues { it.startsWith("MANIFOLD_SOLID_BREP(") }
+        assertEquals("each connected component needs its own shell", 2, shells.size)
+        assertEquals(2, solids.size)
+        assertEquals(shells.keys, solids.values.flatMap { stepRefs(it) }.toSet())
+        assertEquals(listOf(4, 4), shells.values.map { stepRefs(it).size })
+        assertEquals(8, shells.values.flatMap { stepRefs(it) }.toSet().size)
+        val representation = entities.values.single { it.startsWith("ADVANCED_BREP_SHAPE_REPRESENTATION(") }
+        assertEquals(solids.keys, stepRefs(representation).dropLast(1).toSet())
+    }
+
+    @Test
     fun stlBinary() {
         val mesh = GearBuilder.mesh(spur(1.0, 20))
         val bytes = StlWriter.writeBinary(mesh)

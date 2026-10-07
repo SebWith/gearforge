@@ -45,6 +45,38 @@ object Bore {
         BoreType.SQUARE -> (p.bore.squareAcrossFlats / 2.0) * sqrt(2.0)
     }
 
+    /**
+     * True for the gear types whose body actually has a centre bore cut into it.
+     *
+     * Single definition for [GearParams.coerced] (which clamps the bore so it cannot
+     * overrun the root circle) and [GearSpec.validate]/[GearSpec.measures] (which report
+     * it). Ring, worm, rack and belt bodies are generated without a shaft bore, so a bore
+     * shown or validated for them would describe geometry that does not exist (audit C9).
+     */
+    fun cutsBore(p: GearParams): Boolean = when (p.gearType) {
+        GearType.RACK, GearType.BELT, GearType.INTERNAL_RING, GearType.WORM_PAIR -> false
+        else -> true
+    }
+
+    /**
+     * The bore dimension a user actually specifies a shaft by: the across-flats value for
+     * hex and square bores, the nominal diameter otherwise. `null` when the type cuts no
+     * bore or the bore is disabled.
+     *
+     * Single definition for [GearSpec.validate] (wall-thickness check) and the measurement
+     * rows in [GearSpec.measures]/[GearSpec.results]; those previously each inlined the
+     * same `when` and could drift apart.
+     */
+    fun displayDiameter(p: GearParams): Double? {
+        if (!cutsBore(p) || p.bore.type == BoreType.NONE) return null
+        return when (p.bore.type) {
+            BoreType.HEX -> p.bore.hexAcrossFlats
+            BoreType.SQUARE -> p.bore.squareAcrossFlats
+            BoreType.NONE -> null
+            else -> p.bore.diameter
+        }
+    }
+
     fun round(r: Double, segments: Int = 48): List<Vec2> =
         (0 until segments).map { k -> Vec2.polar(r, 2.0 * PI * k / segments) }
 
