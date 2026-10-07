@@ -89,8 +89,9 @@ jobs:
       - name: Sätt upp Gradle
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
 
-      - name: Sätt upp Android SDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      # Ingen android-actions/setup-android: ubuntu-latest har redan SDK:n
+      # (platform android-36 + build-tools 36.0.0), och actionens standardpaket
+      # 'tools' finns inte langre i SDK-repot — sdkmanager faller med exit 1.
 
       - name: Gör gradlew körbar
         run: chmod +x gradlew
@@ -129,8 +130,6 @@ jobs:
           java-version: '17'
 
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
-
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
